@@ -3,13 +3,14 @@ package mirtcp
 import (
 	"encoding/binary"
 	"errors"
+	"io"
+	"strconv"
+	"strings"
+
 	"github.com/davyxu/cellnet"
 	"github.com/davyxu/cellnet/codec"
 	"github.com/davyxu/golog"
 	"github.com/yenkeia/mirgo/common"
-	"io"
-	"strconv"
-	"strings"
 )
 
 var (
@@ -192,21 +193,25 @@ func ServerRecvLTVPacket(reader io.Reader, maxPacketSize int) (msg interface{}, 
 
 	allBytes := append(sizeBuffer, body...)
 
-	skip := make(map[string]bool)
-	skip["client.KEEP_ALIVE"] = true
-	skip["client.OBJECT_TURN"] = true
-	packetName := GetPacketName("client", int(common.BytesToUint16(body[:2])))
-	if !skip[packetName] {
-		log.Debugln("<--- 服务端收到 (" + packetName + ") " + strconv.Itoa(len(allBytes)) + "字节: " + String(allBytes))
-	}
-
 	// 发生错误时返回
 	if err != nil {
+		log.Infoln(err)
 		return
 	}
 
 	if len(body) < msgIDSize {
+		log.Infoln(ErrShortMsgID)
 		return nil, ErrShortMsgID
+	}
+
+	skip := make(map[string]bool)
+	skip["client.KEEP_ALIVE"] = true
+	skip["client.OBJECT_TURN"] = true
+	skip["client.WALK"] = true
+	skip["client.RUN"] = true
+	packetName := GetPacketName("client", int(common.BytesToUint16(body[:2])))
+	if !skip[packetName] {
+		log.Debugln("<--- 服务端收到 (" + packetName + ") " + strconv.Itoa(len(allBytes)) + "字节: " + String(allBytes))
 	}
 
 	msgid := binary.LittleEndian.Uint16(body)
@@ -273,6 +278,15 @@ func ServerSendLTVPacket(writer io.Writer, ctx cellnet.ContextSet, data interfac
 	skip := make(map[string]bool)
 	skip["server.KEEP_ALIVE"] = true
 	skip["server.OBJECT_TURN"] = true
+	skip["server.OBJECT_WALK"] = true
+	skip["server.OBJECT_REMOVE"] = true
+	skip["server.OBJECT_MONSTER"] = true
+	skip["server.HEALTH_CHANGED"] = true
+	skip["server.USER_LOCATION"] = true
+	skip["server.OBJECT_ATTACK"] = true
+	skip["server.DAMAGE_INDICATOR"] = true
+	// skip["server.OBJECT_ATTACK"] = true
+	// skip["server.OBJECT_STRUCK"] = true
 	packetName := GetPacketName("server", int(common.BytesToUint16(pkt[2:4])))
 	if !skip[packetName] {
 		log.Debugln("---> 服务端发送 (" + packetName + ") " + strconv.Itoa(len(pkt)) + "字节: " + String(pkt))

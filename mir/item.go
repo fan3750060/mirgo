@@ -2,15 +2,73 @@ package mir
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/yenkeia/mirgo/common"
-	"github.com/yenkeia/mirgo/proto/server"
 )
 
 type Item struct {
 	MapObject
 	Gold     uint64
 	UserItem *common.UserItem
+}
+
+func NewGold(dropper IMapObject, gold uint64) *Item {
+	item := &Item{}
+	item.ID = env.NewObjectID()
+	item.Map = dropper.GetMap()
+	item.Gold = gold
+
+	return item
+}
+
+func NewItem(dropper IMapObject, ui *common.UserItem) *Item {
+	item := &Item{UserItem: ui}
+	item.Name = ui.Info.Name
+	item.ID = env.NewObjectID()
+	item.Map = dropper.GetMap()
+
+	// if ui.IsAdded {
+	// 	item.NameColor = Color.Cyan
+	// } else {
+	if ui.Info.Grade == common.ItemGradeNone {
+		item.NameColor = common.ColorWhite
+	}
+	if ui.Info.Grade == common.ItemGradeCommon {
+		item.NameColor = common.ColorWhite
+	}
+	if ui.Info.Grade == common.ItemGradeRare {
+		item.NameColor = common.ColorDeepSkyBlue
+	}
+	if ui.Info.Grade == common.ItemGradeLegendary {
+		item.NameColor = common.ColorDarkOrange
+	}
+	if ui.Info.Grade == common.ItemGradeMythical {
+		item.NameColor = common.ColorPlum
+	}
+	// }
+
+	return item
+}
+
+func (p *Item) Spawned() {
+	IMapObject_Spawned(p)
+}
+
+func (p *Item) BroadcastHealthChange() {
+
+}
+
+func (i *Item) BroadcastInfo() {
+	if i.UserItem == nil {
+		i.Broadcast(ServerMessage{}.ObjectGold(i))
+	} else {
+		i.Broadcast(ServerMessage{}.ObjectItem(i))
+	}
+}
+
+func (i *Item) GetMap() *Map {
+	return i.Map
 }
 
 func (i *Item) GetID() uint32 {
@@ -21,6 +79,28 @@ func (i *Item) GetName() string {
 	return i.Name
 }
 
+func (i *Item) GetLevel() int {
+	return 0
+}
+
+func (m *Item) AddPlayerCount(n int) {
+	m.PlayerCount += n
+	switch m.PlayerCount {
+	case 1:
+		m.Map.AddActiveObj(m)
+	case 0:
+		m.Map.DelActiveObj(m)
+	}
+}
+
+func (m *Item) Attacked(attacker IMapObject, damage int, dtype common.DefenceType, damageWeapon bool) int {
+	return 0
+}
+
+func (m *Item) GetPlayerCount() int {
+	return m.PlayerCount
+}
+
 func (i *Item) AttackMode() common.AttackMode {
 	return common.AttackModePeace
 }
@@ -29,6 +109,10 @@ func (i *Item) IsDead() bool { return i.Dead }
 
 func (i *Item) IsUndead() bool {
 	return false
+}
+
+func (i *Item) Process(dt time.Duration) {
+
 }
 
 func (i *Item) GetRace() common.ObjectType {
@@ -55,29 +139,6 @@ func (i *Item) GetDirection() common.MirDirection {
 	return i.CurrentDirection
 }
 
-func (i *Item) GetInfo() interface{} {
-	if i.UserItem == nil {
-		res := &server.ObjectGold{
-			ObjectID:  i.GetID(),
-			Gold:      uint32(i.Gold),
-			LocationX: int32(i.GetPoint().X),
-			LocationY: int32(i.GetPoint().Y),
-		}
-		return res
-	} else {
-		res := &server.ObjectItem{
-			ObjectID:  i.GetID(),
-			Name:      i.Name,
-			NameColor: i.NameColor.ToInt32(),
-			LocationX: int32(i.GetPoint().X),
-			LocationY: int32(i.GetPoint().Y),
-			Image:     i.GetImage(),
-			Grade:     common.ItemGradeNone, // TODO
-		}
-		return res
-	}
-}
-
 func (i *Item) IsAttackTarget(attacker IMapObject) bool {
 	return false
 }
@@ -94,8 +155,8 @@ func (i *Item) AddBuff(buff *Buff) {}
 
 func (i *Item) ApplyPoison(poison *Poison, caster IMapObject) {}
 
-func (i *Item) GetItemInfo() common.ItemInfo {
-	return *i.Map.Env.GameDB.GetItemInfoByID(int(i.UserItem.ItemID))
+func (i *Item) GetItemInfo() *common.ItemInfo {
+	return data.GetItemInfoByID(int(i.UserItem.ItemID))
 }
 
 func (i *Item) GetImage() uint16 {
@@ -145,37 +206,25 @@ func (i *Item) GetImage() uint16 {
 
 // Drop 物品加入到地图上，传入中心点 center，范围 distance
 func (i *Item) Drop(center common.Point, distance int) (string, bool) {
-	// 以 center 为中心，向外获取点，放入集合
-	x := int(center.X)
-	y := int(center.Y)
-	points := make([]common.Point, 0)
-	if distance == 0 {
-		points = append(points, center)
-	} else {
-		for k := 1; k <= distance; k++ {
-			minX := x - k
-			maxX := x + k
-			minY := y - k
-			maxY := y + k
-			for n := minY; maxY >= n; n++ {
-				for m := minX; maxX >= m; m++ {
-					if m == minX || m == maxX || n == minY || n == maxY {
-						points = append(points, common.Point{X: uint32(m), Y: uint32(n)})
-					}
-				}
-			}
-		}
-	}
-	for j := range points {
-		p := points[j]
-		c := i.Map.GetCell(p)
+
+	ok := false
+
+	i.Map.RangeCell(center, distance, func(c *Cell, x, y int) bool {
 		if c == nil || c.HasItem() {
-			continue
+			return true
 		}
-		i.CurrentLocation = p
+
+		ok = true
+		i.CurrentLocation = common.NewPoint(x, y)
 		i.Map.AddObject(i)
-		i.Broadcast(i.GetInfo())
-		return "", true
+		i.BroadcastInfo()
+
+		return false
+	})
+
+	if !ok {
+		return fmt.Sprintf("坐标(%s)附近没有合适的点放置物品", center), false
 	}
-	return fmt.Sprintf("坐标(%s)附近没有合适的点放置物品", center), false
+
+	return "", true
 }

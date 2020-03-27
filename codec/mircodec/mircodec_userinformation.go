@@ -1,11 +1,12 @@
 package mircodec
 
 import (
+	"reflect"
+
 	"github.com/davyxu/cellnet"
 	"github.com/davyxu/cellnet/codec"
 	"github.com/yenkeia/mirgo/common"
 	"github.com/yenkeia/mirgo/proto/server"
-	"reflect"
 )
 
 func init() {
@@ -70,7 +71,7 @@ func (*MirUserInformationCodec) Encode(msgObj interface{}, ctx cellnet.ContextSe
 			if !hasUserItem {
 				continue
 			}
-			writer.Write(&ui.Inventory[i])
+			writer.Write(ui.Inventory[i])
 		}
 	}
 
@@ -90,7 +91,7 @@ func (*MirUserInformationCodec) Encode(msgObj interface{}, ctx cellnet.ContextSe
 			if !hasUserItem {
 				continue
 			}
-			writer.Write(&ui.Equipment[i])
+			writer.Write(ui.Equipment[i])
 		}
 	}
 
@@ -110,7 +111,7 @@ func (*MirUserInformationCodec) Encode(msgObj interface{}, ctx cellnet.ContextSe
 			if !hasUserItem {
 				continue
 			}
-			writer.Write(&ui.QuestInventory[i])
+			writer.Write(ui.QuestInventory[i])
 		}
 	}
 	writer.Write(ui.Gold)
@@ -121,13 +122,13 @@ func (*MirUserInformationCodec) Encode(msgObj interface{}, ctx cellnet.ContextSe
 	count := len(ui.ClientMagics)
 	writer.Write(count)
 	for i := range ui.ClientMagics {
-		writer.Write(&ui.ClientMagics[i])
+		writer.Write(ui.ClientMagics[i])
 	}
 	return *writer.Bytes, nil
 }
 
-func IsNull(ui common.UserItem) bool {
-	if ui.ID == 0 && ui.ItemID == 0 {
+func IsNull(ui *common.UserItem) bool {
+	if ui == nil || (ui.ID == 0 && ui.ItemID == 0) {
 		return true
 	}
 	return false
@@ -161,10 +162,11 @@ func (*MirUserInformationCodec) Decode(data interface{}, msgObj interface{}) err
 	// Inventory
 	if reader.ReadBoolean() {
 		count := reader.ReadInt32()
-		ui.Inventory = make([]common.UserItem, count)
+		ui.Inventory = make([]*common.UserItem, count)
 		for i := 0; i < int(count); i++ {
 			if reader.ReadBoolean() {
 				last := reader.Last()
+				// FIXME
 				item := &ui.Inventory[i]
 				*reader.Bytes = decodeValue(reflect.ValueOf(item), last)
 			}
@@ -174,10 +176,11 @@ func (*MirUserInformationCodec) Decode(data interface{}, msgObj interface{}) err
 	// Equipment
 	if reader.ReadBoolean() {
 		count := reader.ReadInt32()
-		ui.Equipment = make([]common.UserItem, count)
+		ui.Equipment = make([]*common.UserItem, count)
 		for i := 0; i < int(count); i++ {
 			if reader.ReadBoolean() {
 				last := reader.Last()
+				// FIXME
 				item := &ui.Equipment[i]
 				*reader.Bytes = decodeValue(reflect.ValueOf(item), last)
 			}
@@ -187,10 +190,11 @@ func (*MirUserInformationCodec) Decode(data interface{}, msgObj interface{}) err
 	// QuestInventory
 	if reader.ReadBoolean() {
 		count := reader.ReadInt32()
-		ui.QuestInventory = make([]common.UserItem, count)
+		ui.QuestInventory = make([]*common.UserItem, count)
 		for i := 0; i < int(count); i++ {
 			if reader.ReadBoolean() {
 				last := reader.Last()
+				// FIXME
 				item := &ui.QuestInventory[i]
 				*reader.Bytes = decodeValue(reflect.ValueOf(item), last)
 			}
@@ -202,12 +206,12 @@ func (*MirUserInformationCodec) Decode(data interface{}, msgObj interface{}) err
 	ui.ExpandedStorageExpiryTime = reader.ReadInt64()
 
 	count := reader.ReadInt32()
-	clientMagics := make([]common.ClientMagic, 0)
+	clientMagics := make([]*common.ClientMagic, 0)
 	for i := 0; i < int(count); i++ {
 		last := reader.Last()
 		magic := new(common.ClientMagic)
 		*reader.Bytes = decodeValue(reflect.ValueOf(magic), last)
-		clientMagics = append(clientMagics, *magic)
+		clientMagics = append(clientMagics, magic)
 	}
 	ui.ClientMagics = clientMagics
 	return nil

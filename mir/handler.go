@@ -1,7 +1,6 @@
 package mir
 
 import (
-	"sync"
 	"time"
 
 	"github.com/davyxu/cellnet"
@@ -12,20 +11,14 @@ import (
 	"github.com/yenkeia/mirgo/proto/server"
 )
 
-func (g *Game) HandleEvent(ev cellnet.Event) {
-	// g.Pool.Submit(NewTask(_HandleEvent, g, ev))
-	_HandleEvent(g, ev)
+type Game struct {
 }
 
-func _HandleEvent(args ...interface{}) {
-	var (
-		g  *Game
-		ev cellnet.Event
-		s  cellnet.Session
-	)
-	g = args[0].(*Game)
-	ev = args[1].(cellnet.Event)
-	s = ev.Session()
+func (g *Game) HandleEvent(ev cellnet.Event) {
+	// g.Pool.Submit(NewTask(_HandleEvent, g, ev))
+
+	s := ev.Session()
+
 	switch msg := ev.Message().(type) {
 	case *cellnet.SessionAccepted: // 有新的连接
 		g.SessionAccepted(s, msg)
@@ -49,262 +42,269 @@ func _HandleEvent(args ...interface{}) {
 		g.StartGame(s, msg)
 	case *client.LogOut:
 		g.LogOut(s, msg)
+
 	default:
 		p, ok := g.GetPlayer(s, GAME)
 		if !ok {
 			return
 		}
-		switch msg := ev.Message().(type) {
-		case *client.Turn:
-			g.Turn(p, msg)
-		case *client.Walk:
-			g.Walk(p, msg)
-		case *client.Run:
-			g.Run(p, msg)
-		case *client.Chat:
-			g.Chat(p, msg)
-		case *client.MoveItem:
-			g.MoveItem(p, msg)
-		case *client.StoreItem:
-			g.StoreItem(p, msg)
-		case *client.DepositRefineItem:
-			g.DepositRefineItem(p, msg)
-		case *client.RetrieveRefineItem:
-			g.RetrieveRefineItem(p, msg)
-		case *client.RefineCancel:
-			g.RefineCancel(p, msg)
-		case *client.RefineItem:
-			g.RefineItem(p, msg)
-		case *client.CheckRefine:
-			g.CheckRefine(p, msg)
-		case *client.ReplaceWedRing:
-			g.ReplaceWedRing(p, msg)
-		case *client.DepositTradeItem:
-			g.DepositTradeItem(p, msg)
-		case *client.RetrieveTradeItem:
-			g.RetrieveTradeItem(p, msg)
-		case *client.TakeBackItem:
-			g.TakeBackItem(p, msg)
-		case *client.MergeItem:
-			g.MergeItem(p, msg)
-		case *client.EquipItem:
-			g.EquipItem(p, msg)
-		case *client.RemoveItem:
-			g.RemoveItem(p, msg)
-		case *client.RemoveSlotItem:
-			g.RemoveSlotItem(p, msg)
-		case *client.SplitItem:
-			g.SplitItem(p, msg)
-		case *client.UseItem:
-			g.UseItem(p, msg)
-		case *client.DropItem:
-			g.DropItem(p, msg)
-		case *client.DropGold:
-			g.DropGold(p, msg)
-		case *client.PickUp:
-			g.PickUp(p, msg)
-		case *client.Inspect:
-			g.Inspect(p, msg)
-		case *client.ChangeAMode:
-			g.ChangeAMode(p, msg)
-		case *client.ChangePMode:
-			g.ChangePMode(p, msg)
-		case *client.ChangeTrade:
-			g.ChangeTrade(p, msg)
-		case *client.Attack:
-			g.Attack(p, msg)
-		case *client.RangeAttack:
-			g.RangeAttack(p, msg)
-		case *client.Harvest:
-			g.Harvest(p, msg)
-		case *client.CallNPC:
-			g.CallNPC(p, msg)
-		case *client.TalkMonsterNPC:
-			g.TalkMonsterNPC(p, msg)
-		case *client.BuyItem:
-			g.BuyItem(p, msg)
-		case *client.CraftItem:
-			g.CraftItem(p, msg)
-		case *client.SellItem:
-			g.SellItem(p, msg)
-		case *client.RepairItem:
-			g.RepairItem(p, msg)
-		case *client.BuyItemBack:
-			g.BuyItemBack(p, msg)
-		case *client.SRepairItem:
-			g.SRepairItem(p, msg)
-		case *client.MagicKey:
-			g.MagicKey(p, msg)
-		case *client.Magic:
-			g.Magic(p, msg)
-		case *client.SwitchGroup:
-			g.SwitchGroup(p, msg)
-		case *client.AddMember:
-			g.AddMember(p, msg)
-		case *client.DelMember:
-			g.DelMember(p, msg)
-		case *client.GroupInvite:
-			g.GroupInvite(p, msg)
-		case *client.TownRevive:
-			g.TownRevive(p, msg)
-		case *client.SpellToggle:
-			g.SpellToggle(p, msg)
-		case *client.ConsignItem:
-			g.ConsignItem(p, msg)
-		case *client.MarketSearch:
-			g.MarketSearch(p, msg)
-		case *client.MarketRefresh:
-			g.MarketRefresh(p, msg)
-		case *client.MarketPage:
-			g.MarketPage(p, msg)
-		case *client.MarketBuy:
-			g.MarketBuy(p, msg)
-		case *client.MarketGetBack:
-			g.MarketGetBack(p, msg)
-		case *client.RequestUserName:
-			g.RequestUserName(p, msg)
-		case *client.RequestChatItem:
-			g.RequestChatItem(p, msg)
-		case *client.EditGuildMember:
-			g.EditGuildMember(p, msg)
-		case *client.EditGuildNotice:
-			g.EditGuildNotice(p, msg)
-		case *client.GuildInvite:
-			g.GuildInvite(p, msg)
-		case *client.RequestGuildInfo:
-			g.RequestGuildInfo(p, msg)
-		case *client.GuildNameReturn:
-			g.GuildNameReturn(p, msg)
-		case *client.GuildStorageGoldChange:
-			g.GuildStorageGoldChange(p, msg)
-		case *client.GuildStorageItemChange:
-			g.GuildStorageItemChange(p, msg)
-		case *client.GuildWarReturn:
-			g.GuildWarReturn(p, msg)
-		case *client.MarriageRequest:
-			g.MarriageRequest(p, msg)
-		case *client.MarriageReply:
-			g.MarriageReply(p, msg)
-		case *client.ChangeMarriage:
-			g.ChangeMarriage(p, msg)
-		case *client.DivorceRequest:
-			g.DivorceRequest(p, msg)
-		case *client.DivorceReply:
-			g.DivorceReply(p, msg)
-		case *client.AddMentor:
-			g.AddMentor(p, msg)
-		case *client.MentorReply:
-			g.MentorReply(p, msg)
-		case *client.AllowMentor:
-			g.AllowMentor(p, msg)
-		case *client.CancelMentor:
-			g.CancelMentor(p, msg)
-		case *client.TradeRequest:
-			g.TradeRequest(p, msg)
-		case *client.TradeGold:
-			g.TradeGold(p, msg)
-		case *client.TradeReply:
-			g.TradeReply(p, msg)
-		case *client.TradeConfirm:
-			g.TradeConfirm(p, msg)
-		case *client.TradeCancel:
-			g.TradeCancel(p, msg)
-		case *client.EquipSlotItem:
-			g.EquipSlotItem(p, msg)
-		case *client.FishingCast:
-			g.FishingCast(p, msg)
-		case *client.FishingChangeAutocast:
-			g.FishingChangeAutocast(p, msg)
-		case *client.AcceptQuest:
-			g.AcceptQuest(p, msg)
-		case *client.FinishQuest:
-			g.FinishQuest(p, msg)
-		case *client.AbandonQuest:
-			g.AbandonQuest(p, msg)
-		case *client.ShareQuest:
-			g.ShareQuest(p, msg)
-		case *client.AcceptReincarnation:
-			g.AcceptReincarnation(p, msg)
-		case *client.CancelReincarnation:
-			g.CancelReincarnation(p, msg)
-		case *client.CombineItem:
-			g.CombineItem(p, msg)
-		case *client.SetConcentration:
-			g.SetConcentration(p, msg)
-		case *client.AwakeningNeedMaterials:
-			g.AwakeningNeedMaterials(p, msg)
-		case *client.AwakeningLockedItem:
-			g.AwakeningLockedItem(p, msg)
-		case *client.Awakening:
-			g.Awakening(p, msg)
-		case *client.DisassembleItem:
-			g.DisassembleItem(p, msg)
-		case *client.DowngradeAwakening:
-			g.DowngradeAwakening(p, msg)
-		case *client.ResetAddedItem:
-			g.ResetAddedItem(p, msg)
-		case *client.SendMail:
-			g.SendMail(p, msg)
-		case *client.ReadMail:
-			g.ReadMail(p, msg)
-		case *client.CollectParcel:
-			g.CollectParcel(p, msg)
-		case *client.DeleteMail:
-			g.DeleteMail(p, msg)
-		case *client.LockMail:
-			g.LockMail(p, msg)
-		case *client.MailLockedItem:
-			g.MailLockedItem(p, msg)
-		case *client.MailCost:
-			g.MailCost(p, msg)
-		case *client.UpdateIntelligentCreature: //IntelligentCreature
-			g.UpdateIntelligentCreature(p, msg)
-		case *client.IntelligentCreaturePickup: //IntelligentCreature
-			g.IntelligentCreaturePickup(p, msg)
-		case *client.AddFriend:
-			g.AddFriend(p, msg)
-		case *client.RemoveFriend:
-			g.RemoveFriend(p, msg)
-		case *client.RefreshFriends:
-			g.RefreshFriends(p, msg)
-		case *client.AddMemo:
-			g.AddMemo(p, msg)
-		case *client.GuildBuffUpdate:
-			g.GuildBuffUpdate(p, msg)
-		case *client.GameshopBuy:
-			g.GameshopBuy(p, msg)
-		case *client.NPCConfirmInput:
-			g.NPCConfirmInput(p, msg)
-		case *client.ReportIssue:
-			g.ReportIssue(p, msg)
-		case *client.GetRanking:
-			g.GetRanking(p, msg)
-		case *client.Opendoor:
-			g.Opendoor(p, msg)
-		case *client.GetRentedItems:
-			g.GetRentedItems(p, msg)
-		case *client.ItemRentalRequest:
-			g.ItemRentalRequest(p, msg)
-		case *client.ItemRentalFee:
-			g.ItemRentalFee(p, msg)
-		case *client.ItemRentalPeriod:
-			g.ItemRentalPeriod(p, msg)
-		case *client.DepositRentalItem:
-			g.DepositRentalItem(p, msg)
-		case *client.RetrieveRentalItem:
-			g.RetrieveRentalItem(p, msg)
-		case *client.CancelItemRental:
-			g.CancelItemRental(p, msg)
-		case *client.ItemRentalLockFee:
-			g.ItemRentalLockFee(p, msg)
-		case *client.ItemRentalLockItem:
-			g.ItemRentalLockItem(p, msg)
-		case *client.ConfirmItemRental:
-			g.ConfirmItemRental(p, msg)
-		default:
-			log.Debugln("default:", msg)
-			//MessageQueue.Enqueue(string.Format("Invalid packet received. Index : {0}", p.Index));
-		}
+
+		_HandleEvent(p, g, ev, s)
+	}
+}
+
+func _HandleEvent(p *Player, g *Game, ev cellnet.Event, s cellnet.Session) {
+
+	switch msg := ev.Message().(type) {
+	case *client.Turn:
+		g.Turn(p, msg)
+	case *client.Walk:
+		g.Walk(p, msg)
+	case *client.Run:
+		g.Run(p, msg)
+	case *client.Chat:
+		g.Chat(p, msg)
+	case *client.MoveItem:
+		g.MoveItem(p, msg)
+	case *client.StoreItem:
+		g.StoreItem(p, msg)
+	case *client.DepositRefineItem:
+		g.DepositRefineItem(p, msg)
+	case *client.RetrieveRefineItem:
+		g.RetrieveRefineItem(p, msg)
+	case *client.RefineCancel:
+		g.RefineCancel(p, msg)
+	case *client.RefineItem:
+		g.RefineItem(p, msg)
+	case *client.CheckRefine:
+		g.CheckRefine(p, msg)
+	case *client.ReplaceWedRing:
+		g.ReplaceWedRing(p, msg)
+	case *client.DepositTradeItem:
+		g.DepositTradeItem(p, msg)
+	case *client.RetrieveTradeItem:
+		g.RetrieveTradeItem(p, msg)
+	case *client.TakeBackItem:
+		g.TakeBackItem(p, msg)
+	case *client.MergeItem:
+		g.MergeItem(p, msg)
+	case *client.EquipItem:
+		g.EquipItem(p, msg)
+	case *client.RemoveItem:
+		g.RemoveItem(p, msg)
+	case *client.RemoveSlotItem:
+		g.RemoveSlotItem(p, msg)
+	case *client.SplitItem:
+		g.SplitItem(p, msg)
+	case *client.UseItem:
+		g.UseItem(p, msg)
+	case *client.DropItem:
+		g.DropItem(p, msg)
+	case *client.DropGold:
+		g.DropGold(p, msg)
+	case *client.PickUp:
+		g.PickUp(p, msg)
+	case *client.Inspect:
+		g.Inspect(p, msg)
+	case *client.ChangeAMode:
+		g.ChangeAMode(p, msg)
+	case *client.ChangePMode:
+		g.ChangePMode(p, msg)
+	case *client.ChangeTrade:
+		g.ChangeTrade(p, msg)
+	case *client.Attack:
+		g.Attack(p, msg)
+	case *client.RangeAttack:
+		g.RangeAttack(p, msg)
+	case *client.Harvest:
+		g.Harvest(p, msg)
+	case *client.CallNPC:
+		g.CallNPC(p, msg)
+	case *client.TalkMonsterNPC:
+		g.TalkMonsterNPC(p, msg)
+	case *client.BuyItem:
+		g.BuyItem(p, msg)
+	case *client.CraftItem:
+		g.CraftItem(p, msg)
+	case *client.SellItem:
+		g.SellItem(p, msg)
+	case *client.RepairItem:
+		g.RepairItem(p, msg)
+	case *client.BuyItemBack:
+		g.BuyItemBack(p, msg)
+	case *client.SRepairItem:
+		g.SRepairItem(p, msg)
+	case *client.MagicKey:
+		g.MagicKey(p, msg)
+	case *client.Magic:
+		g.Magic(p, msg)
+	case *client.SwitchGroup:
+		g.SwitchGroup(p, msg)
+	case *client.AddMember:
+		g.AddMember(p, msg)
+	case *client.DelMember:
+		g.DelMember(p, msg)
+	case *client.GroupInvite:
+		g.GroupInvite(p, msg)
+	case *client.TownRevive:
+		g.TownRevive(p, msg)
+	case *client.SpellToggle:
+		g.SpellToggle(p, msg)
+	case *client.ConsignItem:
+		g.ConsignItem(p, msg)
+	case *client.MarketSearch:
+		g.MarketSearch(p, msg)
+	case *client.MarketRefresh:
+		g.MarketRefresh(p, msg)
+	case *client.MarketPage:
+		g.MarketPage(p, msg)
+	case *client.MarketBuy:
+		g.MarketBuy(p, msg)
+	case *client.MarketGetBack:
+		g.MarketGetBack(p, msg)
+	case *client.RequestUserName:
+		g.RequestUserName(p, msg)
+	case *client.RequestChatItem:
+		g.RequestChatItem(p, msg)
+	case *client.EditGuildMember:
+		g.EditGuildMember(p, msg)
+	case *client.EditGuildNotice:
+		g.EditGuildNotice(p, msg)
+	case *client.GuildInvite:
+		g.GuildInvite(p, msg)
+	case *client.RequestGuildInfo:
+		g.RequestGuildInfo(p, msg)
+	case *client.GuildNameReturn:
+		g.GuildNameReturn(p, msg)
+	case *client.GuildStorageGoldChange:
+		g.GuildStorageGoldChange(p, msg)
+	case *client.GuildStorageItemChange:
+		g.GuildStorageItemChange(p, msg)
+	case *client.GuildWarReturn:
+		g.GuildWarReturn(p, msg)
+	case *client.MarriageRequest:
+		g.MarriageRequest(p, msg)
+	case *client.MarriageReply:
+		g.MarriageReply(p, msg)
+	case *client.ChangeMarriage:
+		g.ChangeMarriage(p, msg)
+	case *client.DivorceRequest:
+		g.DivorceRequest(p, msg)
+	case *client.DivorceReply:
+		g.DivorceReply(p, msg)
+	case *client.AddMentor:
+		g.AddMentor(p, msg)
+	case *client.MentorReply:
+		g.MentorReply(p, msg)
+	case *client.AllowMentor:
+		g.AllowMentor(p, msg)
+	case *client.CancelMentor:
+		g.CancelMentor(p, msg)
+	case *client.TradeRequest:
+		g.TradeRequest(p, msg)
+	case *client.TradeGold:
+		g.TradeGold(p, msg)
+	case *client.TradeReply:
+		g.TradeReply(p, msg)
+	case *client.TradeConfirm:
+		g.TradeConfirm(p, msg)
+	case *client.TradeCancel:
+		g.TradeCancel(p, msg)
+	case *client.EquipSlotItem:
+		g.EquipSlotItem(p, msg)
+	case *client.FishingCast:
+		g.FishingCast(p, msg)
+	case *client.FishingChangeAutocast:
+		g.FishingChangeAutocast(p, msg)
+	case *client.AcceptQuest:
+		g.AcceptQuest(p, msg)
+	case *client.FinishQuest:
+		g.FinishQuest(p, msg)
+	case *client.AbandonQuest:
+		g.AbandonQuest(p, msg)
+	case *client.ShareQuest:
+		g.ShareQuest(p, msg)
+	case *client.AcceptReincarnation:
+		g.AcceptReincarnation(p, msg)
+	case *client.CancelReincarnation:
+		g.CancelReincarnation(p, msg)
+	case *client.CombineItem:
+		g.CombineItem(p, msg)
+	case *client.SetConcentration:
+		g.SetConcentration(p, msg)
+	case *client.AwakeningNeedMaterials:
+		g.AwakeningNeedMaterials(p, msg)
+	case *client.AwakeningLockedItem:
+		g.AwakeningLockedItem(p, msg)
+	case *client.Awakening:
+		g.Awakening(p, msg)
+	case *client.DisassembleItem:
+		g.DisassembleItem(p, msg)
+	case *client.DowngradeAwakening:
+		g.DowngradeAwakening(p, msg)
+	case *client.ResetAddedItem:
+		g.ResetAddedItem(p, msg)
+	case *client.SendMail:
+		g.SendMail(p, msg)
+	case *client.ReadMail:
+		g.ReadMail(p, msg)
+	case *client.CollectParcel:
+		g.CollectParcel(p, msg)
+	case *client.DeleteMail:
+		g.DeleteMail(p, msg)
+	case *client.LockMail:
+		g.LockMail(p, msg)
+	case *client.MailLockedItem:
+		g.MailLockedItem(p, msg)
+	case *client.MailCost:
+		g.MailCost(p, msg)
+	case *client.UpdateIntelligentCreature: //IntelligentCreature
+		g.UpdateIntelligentCreature(p, msg)
+	case *client.IntelligentCreaturePickup: //IntelligentCreature
+		g.IntelligentCreaturePickup(p, msg)
+	case *client.AddFriend:
+		g.AddFriend(p, msg)
+	case *client.RemoveFriend:
+		g.RemoveFriend(p, msg)
+	case *client.RefreshFriends:
+		g.RefreshFriends(p, msg)
+	case *client.AddMemo:
+		g.AddMemo(p, msg)
+	case *client.GuildBuffUpdate:
+		g.GuildBuffUpdate(p, msg)
+	case *client.GameshopBuy:
+		g.GameshopBuy(p, msg)
+	case *client.NPCConfirmInput:
+		g.NPCConfirmInput(p, msg)
+	case *client.ReportIssue:
+		g.ReportIssue(p, msg)
+	case *client.GetRanking:
+		g.GetRanking(p, msg)
+	case *client.Opendoor:
+		g.Opendoor(p, msg)
+	case *client.GetRentedItems:
+		g.GetRentedItems(p, msg)
+	case *client.ItemRentalRequest:
+		g.ItemRentalRequest(p, msg)
+	case *client.ItemRentalFee:
+		g.ItemRentalFee(p, msg)
+	case *client.ItemRentalPeriod:
+		g.ItemRentalPeriod(p, msg)
+	case *client.DepositRentalItem:
+		g.DepositRentalItem(p, msg)
+	case *client.RetrieveRentalItem:
+		g.RetrieveRentalItem(p, msg)
+	case *client.CancelItemRental:
+		g.CancelItemRental(p, msg)
+	case *client.ItemRentalLockFee:
+		g.ItemRentalLockFee(p, msg)
+	case *client.ItemRentalLockItem:
+		g.ItemRentalLockItem(p, msg)
+	case *client.ConfirmItemRental:
+		g.ConfirmItemRental(p, msg)
+	default:
+		log.Debugln("default:", msg)
+		//MessageQueue.Enqueue(string.Format("Invalid packet received. Index : {0}", p.Index));
 	}
 }
 
@@ -315,7 +315,7 @@ func (g *Game) SessionAccepted(s cellnet.Session, msg *cellnet.SessionAccepted) 
 
 // SessionClosed ...
 func (g *Game) SessionClosed(s cellnet.Session, msg *cellnet.SessionClosed) {
-	pm := g.Env.SessionIDPlayerMap
+	pm := env.SessionIDPlayerMap
 	v, ok := pm.Load(s.ID())
 	if !ok {
 		return
@@ -323,7 +323,8 @@ func (g *Game) SessionClosed(s cellnet.Session, msg *cellnet.SessionClosed) {
 	p := v.(*Player)
 	if p.GameStage == GAME {
 		p.StopGame(StopGameUserClosedGame)
-		g.Env.DeletePlayer(p)
+		env.DeletePlayer(p)
+		p.SaveData()
 	}
 	pm.Delete(s.ID())
 }
@@ -334,12 +335,12 @@ func (g *Game) ClientVersion(s cellnet.Session, msg *client.ClientVersion) {
 	p := new(Player)
 	p.GameStage = LOGIN
 	p.Session = &s
-	g.Env.SessionIDPlayerMap.Store(s.ID(), p)
+	env.SessionIDPlayerMap.Store(s.ID(), p)
 	s.Send(&clientVersion)
 }
 
 func (g *Game) GetPlayer(s cellnet.Session, gameStage int) (p *Player, ok bool) {
-	v, ok := g.Env.SessionIDPlayerMap.Load(s.ID())
+	v, ok := env.SessionIDPlayerMap.Load(s.ID())
 	if !ok {
 		return nil, false
 	}
@@ -375,11 +376,11 @@ func (g *Game) NewAccount(s cellnet.Session, msg *client.NewAccount) {
 
 	res := uint8(0)
 	ac := new(common.Account)
-	g.DB.Table("account").Where("username = ?", msg.AccountID).Find(ac)
+	adb.Table("account").Where("username = ?", msg.AccountID).Find(ac)
 	if ac.ID == 0 && ac.Username == "" {
 		ac.Username = msg.AccountID
 		ac.Password = msg.Password
-		g.DB.Table("account").Create(&ac)
+		adb.Table("account").Create(&ac)
 		res = 8
 	}
 	s.Send(&server.NewAccount{Result: res})
@@ -403,10 +404,10 @@ func (g *Game) ChangePassword(s cellnet.Session, msg *client.ChangePassword) {
 
 	res := uint8(5)
 	ac := new(common.Account)
-	g.DB.Table("account").Where("username = ? AND password = ?", msg.AccountID, msg.CurrentPassword).Find(ac)
+	adb.Table("account").Where("username = ? AND password = ?", msg.AccountID, msg.CurrentPassword).Find(ac)
 	if ac.ID != 0 {
 		ac.Password = msg.NewPassword
-		g.DB.Table("account").Model(ac).Updates(common.Account{Password: msg.NewPassword})
+		adb.Table("account").Model(ac).Updates(common.Account{Password: msg.NewPassword})
 		res = 6
 	}
 	s.Send(&server.ChangePassword{Result: res})
@@ -414,13 +415,13 @@ func (g *Game) ChangePassword(s cellnet.Session, msg *client.ChangePassword) {
 
 func (g *Game) getAccountCharacters(AccountID int) []common.SelectInfo {
 	ac := make([]common.AccountCharacter, 3)
-	g.DB.Table("account_character").Where("account_id = ?", AccountID).Limit(3).Find(&ac)
+	adb.Table("account_character").Where("account_id = ?", AccountID).Limit(3).Find(&ac)
 	ids := make([]int, 3)
 	for _, c := range ac {
 		ids = append(ids, c.ID)
 	}
 	cs := make([]common.Character, 3)
-	g.DB.Table("character").Where("id in (?)", ids).Find(&cs)
+	adb.Table("character").Where("id in (?)", ids).Find(&cs)
 	si := make([]common.SelectInfo, len(cs))
 	for i, c := range cs {
 		s := new(common.SelectInfo)
@@ -442,7 +443,7 @@ func (g *Game) Login(s cellnet.Session, msg *client.Login) {
 		return
 	}
 	a := new(common.Account)
-	g.DB.Table("account").Where("username = ? AND password = ?", msg.AccountID, msg.Password).Find(a)
+	adb.Table("account").Where("username = ? AND password = ?", msg.AccountID, msg.Password).Find(a)
 	if a.ID == 0 {
 		s.Send(ServerMessage{}.Login(4))
 		return
@@ -461,7 +462,7 @@ func (g *Game) NewCharacter(s cellnet.Session, msg *client.NewCharacter) {
 		return
 	}
 	acs := make([]common.AccountCharacter, 3)
-	g.DB.Table("account_character").Where("account_id = ?", p.AccountID).Limit(3).Find(&acs)
+	adb.Table("account_character").Where("account_id = ?", p.AccountID).Limit(3).Find(&acs)
 	if len(acs) >= 3 {
 		s.Send(ServerMessage{}.NewCharacter(4))
 		return
@@ -477,15 +478,15 @@ func (g *Game) DeleteCharacter(s cellnet.Session, msg *client.DeleteCharacter) {
 	}
 
 	c := new(common.Character)
-	g.DB.Table("character").Where("id = ?", msg.CharacterIndex).Find(c)
+	adb.Table("character").Where("id = ?", msg.CharacterIndex).Find(c)
 	if c.ID == 0 {
 		res := new(server.DeleteCharacter)
 		res.Result = 4
 		s.Send(res)
 		return
 	}
-	g.DB.Table("character").Delete(c)
-	g.DB.Table("account_character").Where("character_id = ?", c.ID).Delete(common.Character{})
+	adb.Table("character").Delete(c)
+	adb.Table("account_character").Where("character_id = ?", c.ID).Delete(common.Character{})
 	res := new(server.DeleteCharacterSuccess)
 	res.CharacterIndex = msg.CharacterIndex
 	s.Send(res)
@@ -498,46 +499,22 @@ func updatePlayerInfo(g *Game, p *Player, c *common.Character) {
 	p.NameColor = common.Color{R: 255, G: 255, B: 255}
 	p.CurrentDirection = c.Direction
 	p.CurrentLocation = common.NewPoint(int(c.CurrentLocationX), int(c.CurrentLocationY))
-	userItemIDIndexMap := make(map[int]int)
-	cui := make([]common.CharacterUserItem, 0, 100)
-	g.DB.Table("character_user_item").Where("character_id = ?", c.ID).Find(&cui)
-	is := make([]int, 0, 46)
-	es := make([]int, 0, 14)
-	qs := make([]int, 0, 40)
-	for _, i := range cui {
-		switch common.UserItemType(i.Type) {
-		case common.UserItemTypeInventory:
-			is = append(is, i.UserItemID)
-		case common.UserItemTypeEquipment:
-			es = append(es, i.UserItemID)
-		case common.UserItemTypeQuestInventory:
-			qs = append(qs, i.UserItemID)
-		}
-		userItemIDIndexMap[i.UserItemID] = i.Index
+	p.BindLocation = common.NewPoint(c.BindLocationX, c.BindLocationY)
+	p.BindMapIndex = c.BindMapID
+
+	magics := make([]*common.UserMagic, 0)
+	adb.Table("user_magic").Where("character_id = ?", c.ID).Find(&magics)
+	for _, v := range magics {
+		v.Info = data.GetMagicInfoByID(v.MagicID)
 	}
-	inventory := make([]common.UserItem, 46)
-	equipment := make([]common.UserItem, 14)
-	questInventory := make([]common.UserItem, 40)
-	trade := make([]common.UserItem, 0)
-	refine := make([]common.UserItem, 0)
-	uii := make([]common.UserItem, 0, 46)
-	uie := make([]common.UserItem, 0, 14)
-	uiq := make([]common.UserItem, 0, 40)
-	g.DB.Table("user_item").Where("id in (?)", is).Find(&uii)
-	g.DB.Table("user_item").Where("id in (?)", es).Find(&uie)
-	g.DB.Table("user_item").Where("id in (?)", qs).Find(&uiq)
-	for _, v := range uii {
-		inventory[userItemIDIndexMap[int(v.ID)]] = v
-	}
-	for _, v := range uie {
-		equipment[userItemIDIndexMap[int(v.ID)]] = v
-	}
-	for _, v := range uiq {
-		questInventory[userItemIDIndexMap[int(v.ID)]] = v
-	}
-	magics := make([]common.UserMagic, 0)
-	g.DB.Table("user_magic").Where("character_id = ?", c.ID).Find(&magics)
+
+	p.Inventory = BagLoadFromDB(p, common.UserItemTypeInventory, 46)
+	p.Equipment = BagLoadFromDB(p, common.UserItemTypeEquipment, 14)
+	p.QuestInventory = BagLoadFromDB(p, common.UserItemTypeQuestInventory, 40)
+	p.Storage = BagLoadFromDB(p, common.UserItemTypeStorage, 80)
+
 	healNextTime := time.Now().Add(10 * time.Second)
+	p.Dead = false
 	p.HP = c.HP
 	p.MP = c.MP
 	p.Level = c.Level
@@ -548,20 +525,17 @@ func updatePlayerInfo(g *Game, p *Player, c *common.Character) {
 	p.Class = c.Class
 	p.Gender = c.Gender
 	p.Hair = c.Hair
-	p.Inventory = inventory
-	p.Equipment = equipment
-	p.QuestInventory = questInventory
-	p.Trade = trade
-	p.Refine = refine
-	p.SendItemInfo = make([]common.ItemInfo, 0)
+	p.SendItemInfo = make([]*common.ItemInfo, 0)
 	p.MaxExperience = 100
 	p.Magics = magics
-	p.ActionList = new(sync.Map)
+	p.ActionList = NewActionList()
+	p.PoisonList = NewPoisonList()
+	p.BuffList = NewBuffList()
 	p.Health = Health{
 		HPPotNextTime: new(time.Time),
-		HPPotDuration: 3 * time.Second,
+		HPPotDuration: 1 * time.Second,
 		MPPotNextTime: new(time.Time),
-		MPPotDuration: 3 * time.Second,
+		MPPotDuration: 1 * time.Second,
 		HealNextTime:  &healNextTime,
 		HealDuration:  10 * time.Second,
 	}
@@ -570,6 +544,9 @@ func updatePlayerInfo(g *Game, p *Player, c *common.Character) {
 	p.AMode = common.AttackModeAll
 	p.PMode = common.PetModeNone
 	p.CallingNPC = nil
+	p.StruckTime = time.Now()
+	p.DamageRate = 1.0
+	p.ArmourRate = 1.0
 }
 
 // StartGame 开始游戏
@@ -578,23 +555,34 @@ func (g *Game) StartGame(s cellnet.Session, msg *client.StartGame) {
 	if !ok {
 		return
 	}
+
 	c := new(common.Character)
-	g.DB.Table("character").Where("id = ?", msg.CharacterIndex).Find(c)
+	adb.Table("character").Where("id = ?", msg.CharacterIndex).Find(c)
 	if c.ID == 0 {
 		return
 	}
 	ac := new(common.AccountCharacter)
-	g.DB.Table("account_character").Where("account_id = ? and character_id = ?", p.AccountID, c.ID).Find(&ac)
+	adb.Table("account_character").Where("account_id = ? and character_id = ?", p.AccountID, c.ID).Find(&ac)
 	if ac.ID == 0 {
 		s.Send(ServerMessage{}.StartGame(2, 1024))
 		return
 	}
 	s.Send(ServerMessage{}.SetConcentration(p))
 	s.Send(ServerMessage{}.StartGame(4, 1024))
+
 	updatePlayerInfo(g, p, c)
+
+	if p.Level == 0 {
+		p.Level = 1
+		adb.SyncLevel(p)
+		for _, v := range data.StartItems {
+			p.GainItem(env.NewUserItem(v))
+		}
+	}
+
 	log.Debugf("player login, AccountID(%d) Name(%s)\n", p.AccountID, p.Name)
-	p.Map = g.Env.GetMap(int(c.CurrentMapID))
-	g.Env.AddPlayer(p)
+	p.Map = env.GetMap(int(c.CurrentMapID))
+	env.AddPlayer(p)
 	p.StartGame()
 }
 
@@ -603,9 +591,11 @@ func (g *Game) LogOut(s cellnet.Session, msg *client.LogOut) {
 	if !ok {
 		return
 	}
+	p.GameStage = SELECT
 	p.StopGame(StopGameUserReturnedToSelectChar)
-	g.Env.DeletePlayer(p)
+	env.DeletePlayer(p)
 	s.Send(ServerMessage{}.LogOutSuccess(g.getAccountCharacters(p.AccountID)))
+	p.SaveData()
 }
 
 func (g *Game) Turn(p *Player, msg *client.Turn) {
@@ -746,7 +736,7 @@ func (g *Game) BuyItem(p *Player, msg *client.BuyItem) {
 
 // TODO
 func (g *Game) CraftItem(p *Player, msg *client.CraftItem) {
-	p.CraftItem()
+	p.CraftItem(msg.UniqueID, msg.Count, msg.Slots)
 }
 
 func (g *Game) SellItem(p *Player, msg *client.SellItem) {
@@ -834,131 +824,131 @@ func (g *Game) EditGuildMember(p *Player, msg *client.EditGuildMember) {
 }
 
 func (g *Game) EditGuildNotice(p *Player, msg *client.EditGuildNotice) {
-	//p.EditGuildNotice()
+	p.EditGuildNotice(msg.Notice)
 }
 
 func (g *Game) GuildInvite(p *Player, msg *client.GuildInvite) {
-	//p.GuildInvite()
+	p.GuildInvite(msg.AcceptInvite)
 }
 
 func (g *Game) RequestGuildInfo(p *Player, msg *client.RequestGuildInfo) {
-	//p.RequestGuildInfo()
+	p.RequestGuildInfo(msg.Type)
 }
 
 func (g *Game) GuildNameReturn(p *Player, msg *client.GuildNameReturn) {
-	//p.GuildNameReturn()
+	p.GuildNameReturn(msg.Name)
 }
 
 func (g *Game) GuildStorageGoldChange(p *Player, msg *client.GuildStorageGoldChange) {
-	//p.GuildStorageGoldChange()
+	p.GuildStorageGoldChange(msg.Type, msg.Amount)
 }
 
 func (g *Game) GuildStorageItemChange(p *Player, msg *client.GuildStorageItemChange) {
-	//p.GuildStorageItemChange()
+	p.GuildStorageItemChange(msg.Type, msg.From, msg.To)
 }
 
 func (g *Game) GuildWarReturn(p *Player, msg *client.GuildWarReturn) {
-	//p.GuildWarReturn()
+	p.GuildWarReturn(msg.Name)
 }
 
 func (g *Game) MarriageRequest(p *Player, msg *client.MarriageRequest) {
-	//p.MarriageRequest()
+	p.MarriageRequest()
 }
 
 func (g *Game) MarriageReply(p *Player, msg *client.MarriageReply) {
-	//p.MarriageReply()
+	p.MarriageReply(msg.AcceptInvite)
 }
 
 func (g *Game) ChangeMarriage(p *Player, msg *client.ChangeMarriage) {
-	//p.ChangeMarriage()
+	p.ChangeMarriage()
 }
 
 func (g *Game) DivorceRequest(p *Player, msg *client.DivorceRequest) {
-	//p.DivorceRequest()
+	p.DivorceRequest()
 }
 
 func (g *Game) DivorceReply(p *Player, msg *client.DivorceReply) {
-	//p.DivorceReply()
+	p.DivorceReply(msg.AcceptInvite)
 }
 
 func (g *Game) AddMentor(p *Player, msg *client.AddMentor) {
-	//p.AddMentor()
+	p.AddMentor(msg.Name)
 }
 
 func (g *Game) MentorReply(p *Player, msg *client.MentorReply) {
-	//p.MentorReply()
+	p.MentorReply(msg.AcceptInvite)
 }
 
 func (g *Game) AllowMentor(p *Player, msg *client.AllowMentor) {
-	//p.AllowMentor()
+	p.AllowMentor()
 }
 
 func (g *Game) CancelMentor(p *Player, msg *client.CancelMentor) {
-	//p.CancelMentor()
+	p.CancelMentor()
 }
 
 func (g *Game) TradeRequest(p *Player, msg *client.TradeRequest) {
-	//p.TradeRequest()
+	p.TradeRequest()
 }
 
 func (g *Game) TradeGold(p *Player, msg *client.TradeGold) {
-	//p.TradeGold()
+	p.TradeGold(msg.Amount)
 }
 
 func (g *Game) TradeReply(p *Player, msg *client.TradeReply) {
-	//p.TradeReply()
+	p.TradeReply(msg.AcceptInvite)
 }
 
 func (g *Game) TradeConfirm(p *Player, msg *client.TradeConfirm) {
-	//p.TradeConfirm()
+	p.TradeConfirm(msg.Locked)
 }
 
 func (g *Game) TradeCancel(p *Player, msg *client.TradeCancel) {
-	//p.TradeCancel()
+	p.TradeCancel()
 }
 
 func (g *Game) EquipSlotItem(p *Player, msg *client.EquipSlotItem) {
-	//p.EquipSlotItem()
+	p.EquipSlotItem(msg.Grid, msg.UniqueID, msg.To, msg.GridTo)
 }
 
 func (g *Game) FishingCast(p *Player, msg *client.FishingCast) {
-	//p.FishingCast()
+	p.FishingCast(msg.CastOut)
 }
 
 func (g *Game) FishingChangeAutocast(p *Player, msg *client.FishingChangeAutocast) {
-	//p.FishingChangeAutocast()
+	p.FishingChangeAutocast(msg.AutoCast)
 }
 
 func (g *Game) AcceptQuest(p *Player, msg *client.AcceptQuest) {
-	//p.AcceptQuest()
+	p.AcceptQuest(msg.NPCIndex, msg.QuestIndex)
 }
 
 func (g *Game) FinishQuest(p *Player, msg *client.FinishQuest) {
-	//p.FinishQuest()
+	p.FinishQuest(msg.QuestIndex, msg.SelectedItemIndex)
 }
 
 func (g *Game) AbandonQuest(p *Player, msg *client.AbandonQuest) {
-	//p.AbandonQuest()
+	p.AbandonQuest(msg.QuestIndex)
 }
 
 func (g *Game) ShareQuest(p *Player, msg *client.ShareQuest) {
-	//p.ShareQuest()
+	p.ShareQuest(msg.QuestIndex)
 }
 
 func (g *Game) AcceptReincarnation(p *Player, msg *client.AcceptReincarnation) {
-	//p.AcceptReincarnation()
+	p.AcceptReincarnation()
 }
 
 func (g *Game) CancelReincarnation(p *Player, msg *client.CancelReincarnation) {
-	//p.CancelReincarnation()
+	p.CancelReincarnation()
 }
 
 func (g *Game) CombineItem(p *Player, msg *client.CombineItem) {
-	//p.CombineItem()
+	p.CombineItem(msg.IDFrom, msg.IDTo)
 }
 
 func (g *Game) SetConcentration(p *Player, msg *client.SetConcentration) {
-	//p.SetConcentration()
+	p.SetConcentration(msg.ObjectID, msg.Enabled, msg.Interrupted)
 }
 
 func (g *Game) AwakeningNeedMaterials(p *Player, msg *client.AwakeningNeedMaterials) {
@@ -1058,7 +1048,7 @@ func (g *Game) GetRanking(p *Player, msg *client.GetRanking) {
 }
 
 func (g *Game) Opendoor(p *Player, msg *client.Opendoor) {
-
+	p.OpenDoor(msg.DoorIndex)
 }
 
 func (g *Game) GetRentedItems(p *Player, msg *client.GetRentedItems) {

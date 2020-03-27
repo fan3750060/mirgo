@@ -23,20 +23,95 @@ func (ServerMessage) SetObjectConcentration(p *Player) *server.SetObjectConcentr
 	}
 }
 
-func (ServerMessage) ObjectPlayer(o IMapObject) (res *server.ObjectPlayer) {
-	return o.GetInfo().(*server.ObjectPlayer)
+func (ServerMessage) ObjectPlayer(p *Player) (res *server.ObjectPlayer) {
+	return &server.ObjectPlayer{
+		ObjectID:         p.ID,
+		Name:             p.Name,
+		GuildName:        p.GuildName,
+		GuildRankName:    p.GuildRankName,
+		NameColor:        p.NameColor.ToInt32(),
+		Class:            p.Class,
+		Gender:           p.Gender,
+		Level:            p.Level,
+		Location:         p.GetPoint(),
+		Direction:        p.GetDirection(),
+		Hair:             p.Hair,
+		Light:            p.Light,
+		Weapon:           int16(p.LooksWeapon),
+		WeaponEffect:     int16(p.LooksWeaponEffect),
+		Armour:           int16(p.LooksArmour),
+		Poison:           common.PoisonTypeNone, // TODO
+		Dead:             p.IsDead(),
+		Hidden:           p.IsHidden(),
+		Effect:           common.SpellEffectNone, // TODO
+		WingEffect:       uint8(p.LooksWings),
+		Extra:            false,                      // TODO
+		MountType:        0,                          // TODO
+		RidingMount:      false,                      // TODO
+		Fishing:          false,                      // TODO
+		TransformType:    0,                          // TODO
+		ElementOrbEffect: 0,                          // TODO
+		ElementOrbLvl:    0,                          // TODO
+		ElementOrbMax:    0,                          // TODO
+		Buffs:            make([]common.BuffType, 0), // TODO
+		LevelEffects:     common.LevelEffectsNone,    // TODO
+	}
 }
 
-func (ServerMessage) ObjectMonster(o IMapObject) *server.ObjectMonster {
-	return o.GetInfo().(*server.ObjectMonster)
+func (ServerMessage) ObjectMonster(m *Monster) *server.ObjectMonster {
+	return &server.ObjectMonster{
+		ObjectID:          m.ID,
+		Name:              m.Name,
+		NameColor:         m.NameColor.ToInt32(),
+		Location:          m.GetPoint(),
+		Image:             m.Image,
+		Direction:         m.GetDirection(),
+		Effect:            uint8(m.Effect),
+		AI:                uint8(m.AI),
+		Light:             m.Light,
+		Dead:              m.IsDead(),
+		Skeleton:          m.IsSkeleton(),
+		Poison:            m.Poison,
+		Hidden:            m.IsHidden(),
+		ShockTime:         0,     // TODO
+		BindingShotCenter: false, // TODO
+		Extra:             false, // TODO
+		ExtraByte:         0,     // TODO
+	}
 }
 
-func (ServerMessage) ObjectGold(o IMapObject) *server.ObjectGold {
-	return o.GetInfo().(*server.ObjectGold)
+func (ServerMessage) ObjectGold(i *Item) *server.ObjectGold {
+	return &server.ObjectGold{
+		ObjectID:  i.GetID(),
+		Gold:      uint32(i.Gold),
+		LocationX: int32(i.GetPoint().X),
+		LocationY: int32(i.GetPoint().Y),
+	}
 }
 
-func (ServerMessage) ObjectItem(o IMapObject) *server.ObjectItem {
-	return o.GetInfo().(*server.ObjectItem)
+func (ServerMessage) ObjectItem(i *Item) *server.ObjectItem {
+	return &server.ObjectItem{
+		ObjectID:  i.GetID(),
+		Name:      i.Name,
+		NameColor: i.NameColor.ToInt32(),
+		LocationX: int32(i.GetPoint().X),
+		LocationY: int32(i.GetPoint().Y),
+		Image:     i.GetImage(),
+		Grade:     common.ItemGradeNone, // TODO
+	}
+}
+
+func (ServerMessage) ObjectNPC(n *NPC) *server.ObjectNPC {
+	return &server.ObjectNPC{
+		ObjectID:  n.ID,
+		Name:      n.Name,
+		NameColor: n.NameColor.ToInt32(),
+		Image:     uint16(n.Image),
+		Color:     0, // TODO
+		Location:  n.GetPoint(),
+		Direction: n.GetDirection(),
+		QuestIDs:  []int32{}, // TODO
+	}
 }
 
 func (ServerMessage) MapInformation(info *common.MapInfo) *server.MapInformation {
@@ -87,13 +162,22 @@ func (ServerMessage) UserInformation(p *Player) *server.UserInformation {
 	ui.LevelEffect = common.LevelEffectsNone // TODO
 	ui.Gold = uint32(p.Gold)
 	ui.Credit = 100 // TODO
-	ui.Inventory = p.Inventory
-	ui.Equipment = p.Equipment
-	ui.QuestInventory = p.QuestInventory
+	ui.Inventory = p.Inventory.Items
+	ui.Equipment = p.Equipment.Items
+	ui.QuestInventory = p.QuestInventory.Items
 	ui.HasExpandedStorage = false    // TODO
 	ui.ExpandedStorageExpiryTime = 0 // TODO
 	ui.ClientMagics = p.GetClientMagics()
 	return ui
+}
+
+func (p *Player) GetClientMagics() []*common.ClientMagic {
+	res := make([]*common.ClientMagic, 0)
+	for i := range p.Magics {
+		userMagic := p.Magics[i]
+		res = append(res, userMagic.GetClientMagic(userMagic.Info))
+	}
+	return res
 }
 
 func (ServerMessage) UserLocation(p *Player) *server.UserLocation {
@@ -140,23 +224,12 @@ func (ServerMessage) ObjectChat(p *Player, message string, chatType common.ChatT
 	}
 }
 
-func (ServerMessage) ObjectNPC(o IMapObject) *server.ObjectNPC {
-	return o.GetInfo().(*server.ObjectNPC)
-}
-
-func (ServerMessage) NewItemInfo(item *common.ItemInfo) *server.NewItemInfo {
-	if item == nil {
-		panic("new item info, item = nil !!!")
-	}
-	return &server.NewItemInfo{Info: *item}
-}
-
 func (ServerMessage) PlayerInspect(p *Player) *server.PlayerInspect {
 	return &server.PlayerInspect{
 		Name:      p.Name,
 		GuildName: p.GuildName,
 		GuildRank: p.GuildRankName,
-		Equipment: p.Equipment,
+		Equipment: p.Equipment.Items,
 		Class:     p.Class,
 		Gender:    p.Gender,
 		Hair:      p.Hair,
@@ -191,25 +264,31 @@ func (ServerMessage) NewCharacter(result int) interface{} {
 func (ServerMessage) NewCharacterSuccess(g *Game, AccountID int, name string, class common.MirClass, gender common.MirGender) *server.NewCharacterSuccess {
 	c := new(common.Character)
 	c.Name = name
-	c.Level = 8
+	c.Level = 0
 	c.Class = class
 	c.Gender = gender
 	c.Hair = 1
-	c.CurrentMapID = 1
-	c.CurrentLocationX = 284
-	c.CurrentLocationY = 608
+
+	startPoint := data.RandomStartPoint()
+	c.CurrentMapID = startPoint.MapID
+	c.CurrentLocationX = startPoint.LocationX
+	c.CurrentLocationY = startPoint.LocationY
+	c.BindMapID = startPoint.MapID
+	c.BindLocationX = startPoint.LocationX
+	c.BindLocationY = startPoint.LocationY
+
 	c.Direction = common.MirDirectionDown
 	c.HP = 15
 	c.MP = 17
 	c.Experience = 0
 	c.AttackMode = common.AttackModeAll
 	c.PetMode = common.PetModeBoth
-	g.DB.Table("character").Create(c)
-	g.DB.Table("character").Where("name = ?", name).Last(c)
+	adb.Table("character").Create(c)
+	adb.Table("character").Where("name = ?", name).Last(c)
 	ac := new(common.AccountCharacter)
 	ac.AccountID = AccountID
 	ac.CharacterID = int(c.ID)
-	g.DB.Table("account_character").Create(ac)
+	adb.Table("account_character").Create(ac)
 	res := new(server.NewCharacterSuccess)
 	res.CharInfo.Index = uint32(c.ID)
 	res.CharInfo.Name = name
@@ -231,19 +310,18 @@ func (ServerMessage) NPCResponse(page []string) *server.NPCResponse {
 }
 
 func (m ServerMessage) Object(obj IMapObject) interface{} {
-	switch obj.GetRace() {
-	case common.ObjectTypePlayer:
+	switch obj := obj.(type) {
+	case *Player:
 		return m.ObjectPlayer(obj)
-	case common.ObjectTypeMonster:
+	case *Monster:
 		return m.ObjectMonster(obj)
-	case common.ObjectTypeMerchant:
+	case *NPC:
 		return m.ObjectNPC(obj)
-	case common.ObjectTypeItem:
-		item := obj.(*Item)
-		if item.UserItem == nil {
-			return m.ObjectGold(item)
+	case *Item:
+		if obj.UserItem == nil {
+			return m.ObjectGold(obj)
 		} else {
-			return m.ObjectItem(item)
+			return m.ObjectItem(obj)
 		}
 	default:
 		panic("unknown object")
@@ -251,7 +329,7 @@ func (m ServerMessage) Object(obj IMapObject) interface{} {
 }
 
 func (ServerMessage) GainedItem(ui *common.UserItem) *server.GainedItem {
-	return &server.GainedItem{Item: *ui}
+	return &server.GainedItem{Item: ui}
 }
 
 func (m ServerMessage) GainedGold(gold uint64) *server.GainedGold {
@@ -338,31 +416,4 @@ func (ServerMessage) LevelChanged(level uint16, experience, maxExperience int64)
 
 func (ServerMessage) ObjectLeveled(id uint32) *server.ObjectLeveled {
 	return &server.ObjectLeveled{ObjectID: id}
-}
-
-func (ServerMessage) Magic(spell common.Spell, targetID uint32, targetLocation common.Point, cast bool, level int) *server.Magic {
-	return &server.Magic{
-		Spell:    spell,
-		TargetID: targetID,
-		TargetX:  int32(targetLocation.X),
-		TargetY:  int32(targetLocation.Y),
-		Cast:     cast,
-		Level:    uint8(level),
-	}
-}
-
-func (ServerMessage) ObjectMagic(obj IMapObject, spell common.Spell, targetID uint32, targetLocation common.Point, cast bool, level int) *server.ObjectMagic {
-	return &server.ObjectMagic{
-		ObjectID:      obj.GetID(),
-		LocationX:     int32(obj.GetPoint().X),
-		LocationY:     int32(obj.GetPoint().Y),
-		Direction:     obj.GetDirection(),
-		Spell:         spell,
-		TargetID:      targetID,
-		TargetX:       int32(targetLocation.X),
-		TargetY:       int32(targetLocation.Y),
-		Cast:          cast,
-		Level:         uint8(level),
-		SelfBroadcast: false,
-	}
 }

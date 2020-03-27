@@ -1,6 +1,19 @@
 package common
 
-import "fmt"
+import (
+	"fmt"
+	"math"
+
+	"github.com/yenkeia/mirgo/ut"
+)
+
+type DropInfo struct {
+	Low           int // 1/3 中的 3，2/10 中的 2
+	High          int // 1/3 中的 3，2/10 中的 10
+	Count         int
+	ItemName      string // ItemInfo.Name
+	QuestRequired bool
+}
 
 // Account 账号
 type Account struct {
@@ -16,6 +29,7 @@ type AccountCharacter struct {
 	CharacterID int
 }
 
+/*
 type Basic struct {
 	ID            int `gorm:"primary_key"`
 	GameVersion   int
@@ -28,6 +42,14 @@ type Basic struct {
 	ConquestIndex int
 	RespawnIndex  int
 }
+*/
+
+// Basic 保存上一次关闭服务端时候的自增 ID
+// TODO MonsterID ItemID 分开
+type Basic struct {
+	ID       int32 `gorm:"primary_key"`
+	ObjectID uint32
+}
 
 // Character 角色
 type Character struct {
@@ -37,9 +59,12 @@ type Character struct {
 	Class            MirClass
 	Gender           MirGender
 	Hair             uint8
-	CurrentMapID     int32
-	CurrentLocationX int32
-	CurrentLocationY int32
+	CurrentMapID     int
+	CurrentLocationX int
+	CurrentLocationY int
+	BindMapID        int
+	BindLocationX    int
+	BindLocationY    int
 	Direction        MirDirection
 	HP               uint16
 	MP               uint16
@@ -59,13 +84,13 @@ type CharacterUserItem struct {
 }
 
 // CharacterUserMagic 角色魔法关系
-type CharacterUserMagic struct {
-	ID          int `gorm:"primary_key"`
-	CharacterID int
-	UserMagicID int
-	//Character   Character `gorm:"-"` // orm ignore
-	//UserMagic   UserMagic `gorm:"-"` // orm ignore
-}
+// type CharacterUserMagic struct {
+// 	ID          int `gorm:"primary_key"`
+// 	CharacterID int
+// 	UserMagicID int
+//	Character   Character `gorm:"-"` // orm ignore
+//	UserMagic   UserMagic `gorm:"-"` // orm ignore
+// }
 
 // GameShopItem 游戏内商城物品
 type GameShopItem struct {
@@ -137,7 +162,7 @@ type ItemInfo struct {
 	Holy           uint8
 	Freezing       uint8
 	PoisonAttack   uint8
-	Bind           int16
+	Bind           uint16
 	Reflect        uint8
 	HpDrainRate    uint8
 	UniqueItem     int16
@@ -247,15 +272,16 @@ type MonsterInfo struct {
 }
 
 type MovementInfo struct {
-	ID            int `gorm:"primary_key"`
-	MapID         int
-	SourceX       int `gorm:"Column:source_x"`
-	SourceY       int `gorm:"Column:source_y"`
-	DestinationX  int `gorm:"Column:destination_x"`
-	DestinationY  int `gorm:"Column:destination_y"`
-	NeedHole      int
-	NeedMove      int
-	ConquestIndex int
+	ID             int `gorm:"primary_key"`
+	SourceMap      int `gorm:"Column:source_map"`
+	SourceX        int `gorm:"Column:source_x"`
+	SourceY        int `gorm:"Column:source_y"`
+	DestinationMap int `gorm:"Column:destination_map"`
+	DestinationX   int `gorm:"Column:destination_x"`
+	DestinationY   int `gorm:"Column:destination_y"`
+	NeedHole       int
+	NeedMove       int
+	ConquestIndex  int
 }
 
 type NpcInfo struct {
@@ -263,8 +289,9 @@ type NpcInfo struct {
 	MapID         int
 	Filename      string `gorm:"Column:file_name"`
 	Name          string
-	LocationX     int `gorm:"Column:location_x"`
-	LocationY     int `gorm:"Column:location_y"`
+	ChineseName   string `gorm:"Column:chinese_name"`
+	LocationX     int    `gorm:"Column:location_x"`
+	LocationY     int    `gorm:"Column:location_y"`
 	Rate          int
 	Image         int
 	TimeVisible   int
@@ -351,6 +378,33 @@ type UserItem struct {
 	CriticalDamage uint8
 	Freezing       uint8
 	PoisonAttack   uint8
+	Info           *ItemInfo `gorm:"-" codec:"-"`
+}
+
+func (u *UserItem) Price() uint64 {
+	if u.Info == nil {
+		return 0
+	}
+
+	var p float64
+
+	if u.Info.Durability > 0 {
+		var r = float64(u.Info.Price) / 2.0 / float64(u.Info.Durability)
+
+		p = float64(u.MaxDura) * r
+
+		if u.MaxDura > 0 {
+			r = float64(u.CurrentDura) / float64(u.MaxDura)
+		}
+
+		p = math.Floor(p/2.0+((p/2.0)*r)) + float64(u.Info.Price)/2.0
+	}
+
+	v := int(u.AC + u.MAC + u.DC + u.MC + u.SC + u.Accuracy + u.Agility + u.HP + u.MP)
+	v += int(u.AttackSpeed + u.Luck)
+	v += int(u.Strong + u.MagicResist + u.PoisonResist + u.HealthRecovery + u.ManaRecovery + u.PoisonRecovery + u.CriticalRate + u.CriticalDamage + u.Freezing + u.PoisonAttack)
+
+	return uint64(p * (float64(v)*0.1 + 1))
 }
 
 func (u UserItem) String() string {
@@ -366,36 +420,46 @@ type UserMagic struct {
 	Key         int `gorm:"Column:magic_key"` // byte
 	Experience  int // uint16
 	IsTempSpell bool
-	CastTime    int // int64
-	//Magic       MagicInfo `gorm:"-"` // orm ignore
+	CastTime    int        // int64
+	Info        *MagicInfo `gorm:"-"` // orm ignore
 }
 
-// TODO
 func (um *UserMagic) GetDamage(damageBase int) int {
-	return 0
+	return damageBase + um.GetPower()
 }
 
-// TODO
-func (um *UserMagic) GetPower(power int) int {
-	// return (int)Math.Round(power / 4F * (Level + 1) + DefPower());
-	return 0
+func (um *UserMagic) GetPower() int {
+	return um.GetPower1(um.MPower())
+}
+func (um *UserMagic) GetPower1(power int) int {
+	return int(math.Round((float64(power)/4.0)*float64(um.Level+1) + float64(um.DefPower())))
 }
 
 func (um *UserMagic) MPower() int {
-	// 	if (Info.MPowerBonus > 0)
-	// 	{
-	// 		return SMain.Envir.Random.Next(Info.MPowerBase, Info.MPowerBonus + Info.MPowerBase);
-	// 	}
-	// 	else
-	// 		return Info.MPowerBase;
-	return 0
+	if um.Info.MPowerBonus > 0 {
+		return ut.RandomNext2(um.Info.MPowerBase, um.Info.MPowerBonus+um.Info.MPowerBase)
+	} else {
+		return um.Info.MPowerBase
+	}
+}
+func (um *UserMagic) DefPower() int {
+	if um.Info.MPowerBonus > 0 {
+		return ut.RandomNext2(um.Info.PowerBase, um.Info.PowerBonus+um.Info.PowerBase)
+	} else {
+		return um.Info.MPowerBase
+	}
 }
 
-func (um *UserMagic) GetClientMagic(info *MagicInfo) ClientMagic {
+func (um *UserMagic) GetDelay() int {
+	return um.Info.DelayBase - (um.Level * um.Info.DelayReduction)
+}
+
+func (um *UserMagic) GetClientMagic(info *MagicInfo) *ClientMagic {
 	delay := info.DelayBase - (um.Level * info.DelayReduction)
 	//castTime := (CastTime != 0) && (SMain.Envir.Time > CastTime) ? SMain.Envir.Time - CastTime : 0
 	castTime := 0
-	return ClientMagic{
+	return &ClientMagic{
+		Name:       info.Name,
 		Spell:      um.Spell,
 		BaseCost:   uint8(info.BaseCost),
 		LevelCost:  uint8(info.LevelCost),

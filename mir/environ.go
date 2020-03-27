@@ -1,132 +1,152 @@
 package mir
 
 import (
-	"os"
+	"fmt"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/davyxu/cellnet"
+	"github.com/davyxu/cellnet/peer"
+	_ "github.com/davyxu/cellnet/peer/tcp"
+	"github.com/davyxu/cellnet/proc"
+	"github.com/davyxu/cellnet/timer"
+	"github.com/davyxu/golog"
+	"github.com/jinzhu/gorm"
+	_ "github.com/jinzhu/gorm/dialects/sqlite"
 	_ "github.com/yenkeia/mirgo/codec/mircodec"
 	"github.com/yenkeia/mirgo/common"
+	"github.com/yenkeia/mirgo/mir/script"
 	_ "github.com/yenkeia/mirgo/proc/mirtcp"
 	"github.com/yenkeia/mirgo/proto/server"
 	"github.com/yenkeia/mirgo/setting"
+	"github.com/yenkeia/mirgo/ut"
 )
+
+var env *Environ
+var log = golog.New("server")
 
 // Environ ...
 type Environ struct {
 	Game               *Game
-	GameDB             *GameDB
-	SessionIDPlayerMap *sync.Map // map[int64]*Player
-	Maps               *sync.Map // map[int]*Map	// mapID: Map
+	Peer               cellnet.GenericPeer
+	SessionIDPlayerMap *sync.Map    // map[int64]*Player
+	Maps               map[int]*Map // mapID: Map
 	ObjectID           uint32
+	ObjectIDChan       chan uint32
 	Players            []*Player
 	lock               *sync.Mutex
+	lastFrame          time.Time
+
+	DefaultNPC *NPC
+}
+
+func (e *Environ) Loop() {
+	now := time.Now()
+	dt := now.Sub(e.lastFrame)
+	e.lastFrame = now
+
+	for _, m := range e.Maps {
+		m.Frame(dt)
+	}
+}
+
+// ServerStart ...
+func (g *Environ) ServerStart() {
+
+	// 这里用cellnet 单线程模式。消息处理都在queue线程。无需再另开线程
+	queue := cellnet.NewEventQueue()
+	p := peer.NewGenericPeer("tcp.Acceptor", "server", settings.Addr, queue)
+	proc.BindProcessorHandler(p, "mir.server.tcp", g.Game.HandleEvent)
+
+	timer.NewLoop(queue, time.Second/time.Duration(60), func(*timer.Loop) {
+		env.Loop()
+	}, nil).Start()
+
+	env.Peer = p
+
+	p.Start()         // 开始侦听
+	queue.StartLoop() // 事件队列开始循环
+	queue.Wait()      // 阻塞等待事件队列结束退出( 在另外的goroutine调用queue.StopLoop() )
 }
 
 // NewEnviron ...
-func NewEnviron(g *Game) (env *Environ) {
-	env = new(Environ)
-	env.Game = g
-	env.InitGameDB()
-	env.InitMonsterDrop()
-	env.InitMaps()
-	env.ObjectID = 100000
-	env.Players = make([]*Player, 0)
-	env.lock = new(sync.Mutex)
-	env.SessionIDPlayerMap = new(sync.Map)
-	PrintEnviron(env)
-	return
+func NewEnviron() *Environ {
+	settings = setting.Must()
+
+	gameData, err := gorm.Open("sqlite3", settings.DBPath)
+	if err != nil {
+		panic(err)
+	}
+	data = NewGameData(gameData)
+
+	accountData, err := gorm.Open("sqlite3", settings.AccountDBPath)
+	if err != nil {
+		panic(err)
+	}
+	adb = NewAccountDB(accountData)
+
+	e := new(Environ)
+	env = e
+
+	e.lastFrame = time.Now()
+
+	e.ObjectIDChan = make(chan uint32, 100000)
+	id := adb.GetObjectID()
+	if id == 0 {
+		id = 100000
+		adb.Table("basic").Create(&common.Basic{ID: 1, ObjectID: id})
+	}
+	e.ObjectID = id
+	go func() {
+		for id := range e.ObjectIDChan {
+			adb.SyncObjectID(id)
+		}
+	}()
+
+	script.SearchPaths = []string{
+		filepath.Join(settings.EnvirPath, "NPCs"),
+		settings.EnvirPath,
+	}
+
+	e.DefaultNPC = NewNPC(nil, e.NewObjectID(), &common.NpcInfo{
+		Name:     "DefaultNPC",
+		Filename: "00Default",
+	})
+
+	e.InitMaps()
+
+	e.Players = make([]*Player, 0)
+	e.lock = new(sync.Mutex)
+	e.SessionIDPlayerMap = new(sync.Map)
+	e.Game = &Game{}
+
+	PrintEnviron(e)
+
+	return env
 }
 
 func PrintEnviron(env *Environ) {
+	banner := `
+• ▌ ▄ ·. ▪  ▄▄▄   ▄▄ •       
+·██ ▐███▪██ ▀▄ █·▐█ ▀ ▪▪     
+▐█ ▌▐▌▐█·▐█·▐▀▀▄ ▄█ ▀█▄ ▄█▀▄ 
+██ ██▌▐█▌▐█▌▐█•█▌▐█▄▪▐█▐█▌.▐▌
+▀▀  █▪▀▀▀▀▀▀.▀  ▀·▀▀▀▀  ▀█▄▀▪
+`
 	mapCount := 0
 	monsterCount := 0
 	npcCount := 0
-	env.Maps.Range(func(k, v interface{}) bool {
+	for _, m := range env.Maps {
 		mapCount++
-		m := v.(*Map)
 		monsterCount += len(m.monsters)
 		npcCount += len(m.npcs)
-		return true
-	})
+	}
+	fmt.Println(banner)
 	log.Debugf("共加载了 %d 张地图，%d 怪物，%d NPC\n", mapCount, monsterCount, npcCount)
-}
-
-// InitGameDB ...
-func (e *Environ) InitGameDB() {
-	gdb := new(GameDB)
-	e.GameDB = gdb
-	db := e.Game.DB
-
-	db.Table("basic").First(&gdb.Basic)
-	db.Table("game_shop_item").Find(&gdb.GameShopItems)
-	db.Table("item").Find(&gdb.ItemInfos)
-	db.Table("magic").Find(&gdb.MagicInfos)
-	db.Table("map").Find(&gdb.MapInfos)
-	db.Table("monster").Find(&gdb.MonsterInfos)
-	db.Table("movement").Find(&gdb.MovementInfos)
-	db.Table("npc").Find(&gdb.NpcInfos)
-	db.Table("quest").Find(&gdb.QuestInfos)
-	db.Table("respawn").Find(&gdb.RespawnInfos)
-	db.Table("safe_zone").Find(&gdb.SafeZoneInfos)
-
-	gdb.MapIDInfoMap = new(sync.Map)
-	gdb.ItemIDInfoMap = new(sync.Map)
-	gdb.ItemNameInfoMap = new(sync.Map)
-	gdb.MonsterIDInfoMap = new(sync.Map)
-	gdb.MonsterNameInfoMap = new(sync.Map)
-	gdb.MagicIDInfoMap = new(sync.Map)
-	for i := range gdb.MapInfos {
-		v := gdb.MapInfos[i]
-		gdb.MapIDInfoMap.Store(v.ID, &v)
-	}
-	for i := range gdb.ItemInfos {
-		v := gdb.ItemInfos[i]
-		gdb.ItemIDInfoMap.Store(int(v.ID), &v)
-		gdb.ItemNameInfoMap.Store(v.Name, &v)
-	}
-	for i := range gdb.MonsterInfos {
-		v := gdb.MonsterInfos[i]
-		gdb.MonsterNameInfoMap.Store(v.Name, &v)
-		gdb.MonsterIDInfoMap.Store(v.ID, &v)
-	}
-	for i := range gdb.MagicInfos {
-		v := gdb.MagicInfos[i]
-		gdb.MagicIDInfoMap.Store(v.ID, &v)
-	}
-}
-
-func (e *Environ) InitMonsterDrop() {
-	gdb := e.GameDB
-	itemMap := make(map[string]int32)
-	for i := range gdb.ItemInfos {
-		v := gdb.ItemInfos[i]
-		itemMap[v.Name] = v.ID
-	}
-	gdb.DropInfoMap = new(sync.Map)
-	for i := range gdb.MonsterInfos {
-		v := gdb.MonsterInfos[i]
-		dropInfos, err := common.GetDropInfosByMonsterName(setting.Conf.DropDirPath, v.Name)
-		if err != nil {
-			log.Warnln("加载怪物掉落错误", v.Name, err.Error())
-			continue
-		}
-		gdb.DropInfoMap.Store(v.Name, dropInfos)
-	}
-}
-
-func (e *Environ) CreateDropItem(m *Map, userItem *common.UserItem, gold uint64) *Item {
-	return &Item{
-		MapObject: MapObject{
-			ID:  e.NewObjectID(),
-			Map: m,
-		},
-		Gold:     gold,
-		UserItem: userItem,
-	}
 }
 
 func (e *Environ) NewUserItem(i *common.ItemInfo) *common.UserItem {
@@ -159,53 +179,50 @@ func (e *Environ) NewUserItem(i *common.ItemInfo) *common.UserItem {
 		CriticalDamage: 0,
 		Freezing:       0,
 		PoisonAttack:   0,
+		Info:           i,
 	}
 	return res
 }
 
 // InitMaps ...
 func (e *Environ) InitMaps() {
-	mapDirPath := setting.Conf.MapDirPath
-	uppercaseNameRealNameMap := make(map[string]string) // 目录下的文件名大写与该文件的真实文件名对应关系
-	f, err := os.OpenFile(mapDirPath, os.O_RDONLY, os.ModeDir)
-	if err != nil {
-		panic(err)
-	}
-	fileInfo, _ := f.Readdir(-1)
-	for _, info := range fileInfo {
-		if !info.IsDir() {
-			uppercaseNameRealNameMap[strings.ToUpper(info.Name())] = info.Name()
-		}
-	}
-	err = f.Close()
-	if err != nil {
-		panic(err)
+
+	uppercaseNameRealNameMap := map[string]string{}
+	files := ut.GetFiles(settings.MapDirPath, []string{".map"})
+
+	for _, f := range files {
+		uppercaseNameRealNameMap[strings.ToUpper(filepath.Base(f))] = f
 	}
 
-	e.Maps = new(sync.Map)
-	for i := range e.GameDB.MapInfos {
-		mi := e.GameDB.MapInfos[i]
-		// FIXME 开发只加载第一张地图
-		if mi.ID != 1 {
+	// FIXME 开发只加载部分地图
+	allowarr := []int{1, 2, 3, 4, 6, 7, 8, 10, 11, 12, 13, 15, 16, 17, 18, 19, 20, 21, 22, 24, 26, 27, 28, 29, 30, 31, 32, 25, 144, 384}
+	allow := map[int]bool{}
+	for _, v := range allowarr {
+		allow[v] = true
+	}
+
+	e.Maps = map[int]*Map{}
+	for _, mi := range data.MapInfos {
+
+		if _, ok := allow[mi.ID]; !ok {
 			continue
 		}
-		m := LoadMap(mapDirPath + uppercaseNameRealNameMap[strings.ToUpper(mi.Filename+".map")])
-		m.Env = e
-		m.Info = &mi
-		if err := m.InitMonsters(); err != nil {
+
+		m := LoadMap(uppercaseNameRealNameMap[strings.ToUpper(mi.Filename+".map")])
+		mi.Filename = strings.ToUpper(mi.Filename)
+		m.Info = mi
+		if err := m.InitAll(); err != nil {
 			panic(err)
 		}
-		if err := m.InitNPCs(); err != nil {
-			panic(err)
-		}
-		go m.Loop()
-		e.Maps.Store(mi.ID, m)
-		break
+
+		e.Maps[mi.ID] = m
 	}
 }
 
 func (e *Environ) NewObjectID() uint32 {
-	return atomic.AddUint32(&e.ObjectID, 1)
+	id := atomic.AddUint32(&e.ObjectID, 1)
+	e.ObjectIDChan <- id
+	return id
 }
 
 func (e *Environ) AddPlayer(p *Player) {
@@ -268,16 +285,26 @@ func (e *Environ) GetPlayersCount() int {
 	return c
 }
 
+func (e *Environ) GetMapByName(filename string) *Map {
+
+	for _, m := range e.Maps {
+		if m.Info.Filename == filename {
+			return m
+		}
+	}
+	return nil
+}
+
 func (e *Environ) GetMap(mapID int) *Map {
-	v, ok := e.Maps.Load(mapID)
+	v, ok := e.Maps[mapID]
 	if !ok {
 		return nil
 	}
-	return v.(*Map)
+	return v
 }
 
 func (e *Environ) Broadcast(msg interface{}) {
-	(*e.Game.Peer).(cellnet.SessionAccessor).VisitSession(func(ses cellnet.Session) bool {
+	e.Peer.(cellnet.SessionAccessor).VisitSession(func(ses cellnet.Session) bool {
 		ses.Send(msg)
 		return true
 	})
@@ -295,11 +322,9 @@ func (e *Environ) SystemBroadcast(...interface{}) {
 func (e *Environ) Debug() {
 	envPlayerCount := e.GetPlayersCount()
 	nplayers := 0
-	e.Maps.Range(func(k, v interface{}) bool {
-		m := v.(*Map)
+	for _, m := range e.Maps {
 		nplayers += len(m.GetAllPlayers())
-		return true
-	})
+	}
 	if nplayers != envPlayerCount {
 		log.Errorf("!!! warning envPlayerCount: %d != map allPlayer: %d\n", envPlayerCount, nplayers)
 	} else {

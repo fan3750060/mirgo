@@ -5,75 +5,84 @@ import (
 	"time"
 
 	"github.com/yenkeia/mirgo/common"
+	"github.com/yenkeia/mirgo/ut"
 )
 
 // Map ...
 type Map struct {
-	Env    *Environ
-	Width  int
-	Height int
-	Info   *common.MapInfo
-	cells  []*Cell
-
-	players  map[uint32]*Player
-	monsters map[uint32]*Monster
-	npcs     map[uint32]*NPC
-
-	ActionList map[uint32]*DelayedAction
+	Width          int
+	Height         int
+	Version        int
+	Info           *common.MapInfo
+	SafeZoneInfos  []*common.SafeZoneInfo
+	Respawns       []*Respawn
+	cells          []*Cell
+	doors          map[byte]*Door
+	doorsMap       *Grid
+	players        map[uint32]*Player
+	monsters       map[uint32]*Monster
+	npcs           map[uint32]*NPC
+	activedObjects map[uint32]IProcessObject
+	ActionList     *ActionList
 }
 
-func NewMap(w, h int) *Map {
+func NewMap(w, h, version int) *Map {
 	m := &Map{
-		Width:    w,
-		Height:   h,
-		cells:    make([]*Cell, w*h),
-		players:  map[uint32]*Player{},
-		monsters: map[uint32]*Monster{},
-		npcs:     map[uint32]*NPC{},
+		Width:          w,
+		Height:         h,
+		Version:        version,
+		cells:          make([]*Cell, w*h),
+		doorsMap:       NewGrid(uint32(w), uint32(h)),
+		doors:          map[byte]*Door{},
+		players:        map[uint32]*Player{},
+		monsters:       map[uint32]*Monster{},
+		npcs:           map[uint32]*NPC{},
+		activedObjects: map[uint32]IProcessObject{},
+		ActionList:     NewActionList(),
 	}
 	return m
 }
 
-func (m *Map) Loop() {
-	// 地图事件 刷怪 地图物品
-	mapTicker := time.NewTicker(300 * time.Millisecond)
-
-	// 玩家事件 buff 等状态改变
-	playerTicker := time.NewTicker(200 * time.Millisecond)
-
-	// 怪物 / NPC 事件. 移动 buff
-	monsterNPCTicker := time.NewTicker(300 * time.Millisecond)
-
-	for {
-		select {
-		case <-mapTicker.C:
-
-			for i, action := range m.ActionList {
-				if !action.Finish && !time.Now().Before(action.ActionTime) {
-					action.Task.Execute()
-				}
-				delete(m.ActionList, i)
-			}
-
-		case <-playerTicker.C:
-
-			for _, p := range m.players {
-				p.Process()
-			}
-
-		case <-monsterNPCTicker.C:
-			for _, monster := range m.monsters {
-				monster.Process()
-			}
-			for _, npc := range m.npcs {
-				npc.Process()
-			}
-		}
-	}
+func (m *Map) AddActiveObj(o interface{}) {
+	v := o.(IProcessObject)
+	m.activedObjects[v.GetID()] = v
 }
 
-func (m *Map) PushAction(action *DelayedAction) {
-	m.ActionList[action.ID] = action
+func (m *Map) DelActiveObj(o interface{}) {
+	delete(m.activedObjects, o.(IProcessObject).GetID())
+}
+
+func (m *Map) Frame(dt time.Duration) {
+
+	m.ActionList.Execute()
+
+	now := time.Now()
+	for _, d := range m.doors {
+		d.Tick(now)
+	}
+
+	for _, p := range m.players {
+		p.Process(dt)
+	}
+
+	for _, o := range m.activedObjects {
+		o.Process(dt)
+	}
+
+	for _, r := range m.Respawns {
+		r.Process(dt)
+	}
+
+	// for _, monster := range m.monsters {
+	// 	if monster.GetPlayerCount() > 0 {
+	// 		monster.Process(dt)
+	// 	}
+	// }
+	// for _, npc := range m.npcs {
+	// 	if npc.GetPlayerCount() > 0 {
+	// 		npc.Process(dt)
+	// 	}
+	// }
 }
 
 func (m *Map) GetCell(p common.Point) *Cell {
@@ -91,6 +100,15 @@ func (m *Map) InMap(x, y int) bool {
 	return x >= 0 && x < m.Width && y >= 0 && y < m.Height
 }
 
+func (m *Map) ValidPointXY(x, y int) bool {
+	c := m.GetCellXY(x, y)
+	return c != nil && c.IsValid()
+}
+func (m *Map) ValidPoint(p common.Point) bool {
+	c := m.GetCell(p)
+	return c != nil && c.IsValid()
+}
+
 func (m *Map) SetCell(p common.Point, c *Cell) {
 	m.SetCellXY(int(p.X), int(p.Y), c)
 }
@@ -101,10 +119,6 @@ func (m *Map) SetCellXY(x, y int, c *Cell) {
 func (m *Map) String() string {
 	return fmt.Sprintf("Map(%d, Filename: %s, Title: %s, Width: %d, Height: %d)", m.Info.ID, m.Info.Filename, m.Info.Title, m.Width, m.Height)
 }
-
-// func (m *Map) Submit(t *Task) {
-// 	m.Env.Game.Pool.EntryChan <- t
-// }
 
 func (m *Map) GetAllPlayers() map[uint32]*Player {
 	return m.players
@@ -119,8 +133,6 @@ func (m *Map) Broadcast(msg interface{}) {
 		p.Enqueue(msg)
 	}
 }
-
-const DataRange = 6
 
 // 位置，消息，跳过玩家
 func (m *Map) BroadcastP(pos common.Point, msg interface{}, me *Player) {
@@ -168,6 +180,8 @@ func (m *Map) DeleteObject(obj IMapObject) {
 	}
 	c.DeleteObject(obj)
 
+	delete(m.activedObjects, obj.GetID())
+
 	switch obj.(type) {
 	case *Player:
 		delete(m.players, obj.GetID())
@@ -179,74 +193,121 @@ func (m *Map) DeleteObject(obj IMapObject) {
 }
 
 // UpdateObject 更新对象在 Cells, AOI 中的数据, 如果更新成功返回 true
-func (m *Map) UpdateObject(obj IMapObject, points ...common.Point) bool {
-	for i := range points {
-		c := m.GetCell(points[i])
-		if c == nil || !c.CanWalk() {
-			return false
-		}
+func (m *Map) UpdateObject(obj IMapObject, point common.Point) bool {
+	destcell := m.GetCell(point)
+	if destcell == nil || !destcell.CanWalk() {
+		return false
+	}
 
-		blocking := false
-		c.Objects.Range(func(k, v interface{}) bool {
-			if v.(IMapObject).IsBlocking() {
-				blocking = true
-				return false
-			}
-			return true
-		})
-
-		if blocking {
+	for _, o := range destcell.objects {
+		if o.IsBlocking() {
 			return false
 		}
 	}
-	c1 := obj.GetCell()
-	c1.DeleteObject(obj)
-	c2 := m.GetCell(points[len(points)-1])
-	c2.AddObject(obj)
-	m.changeAOI(obj, c1, c2)
-	return true
-}
 
-func (m *Map) changeAOI(obj IMapObject, c1 *Cell, c2 *Cell) {
+	sourcecell := obj.GetCell()
+	sourcecell.DeleteObject(obj)
+	destcell.AddObject(obj)
+
 	switch obj.GetRace() {
 	case common.ObjectTypePlayer:
 		p := obj.(*Player)
 		p.Broadcast(ServerMessage{}.ObjectPlayer(p))
-		p.EnqueueAreaObjects(c1, c2)
+		p.EnqueueAreaObjects(sourcecell, destcell)
 	case common.ObjectTypeMonster:
 		m := obj.(*Monster)
 		m.Broadcast(ServerMessage{}.ObjectMonster(m))
 	}
+
+	return true
 }
 
-// InitNPCs 初始化地图上的 NPC
-func (m *Map) InitNPCs() error {
-	for _, ni := range m.Env.GameDB.NpcInfos {
+func (m *Map) InitAll() error {
+
+	//  init npc
+	for _, ni := range data.NpcInfos {
 		ni := ni
 		if ni.MapID == m.Info.ID {
-			n := NewNPC(m, &ni)
+			n := NewNPC(m, env.NewObjectID(), ni)
 			m.AddObject(n)
 		}
 	}
-	return nil
-}
 
-// InitMonsters 初始化地图上的怪物
-func (m *Map) InitMonsters() error {
-	for _, ri := range m.Env.GameDB.RespawnInfos {
-		ri := ri
+	// init respawn
+	m.Respawns = []*Respawn{}
+	for _, ri := range data.RespawnInfos {
 		if ri.MapID == m.Info.ID {
-			cnt := ri.Count
-			for i := 0; i < cnt; i++ {
-				p, err := m.GetValidPoint(ri.LocationX, ri.LocationY, ri.Spread)
-				if err != nil {
-					continue
-				}
-				m.AddObject(NewMonster(m, p, m.Env.GameDB.GetMonsterInfoByID(ri.MonsterID)))
+			respawn, err := NewRespawn(m, ri)
+			if err != nil {
+				return err
 			}
+			m.Respawns = append(m.Respawns, respawn)
+		}
+	}
+
+	for _, r := range m.Respawns {
+		r.Spawn()
+	}
+
+	// init safe zones
+	m.SafeZoneInfos = []*common.SafeZoneInfo{}
+	for _, s := range data.SafeZoneInfos {
+		if s.MapID == m.Info.ID {
+			m.SafeZoneInfos = append(m.SafeZoneInfos, s)
 		}
 	}
 	return nil
+}
+
+func (m *Map) GetSafeZone(loc common.Point) *common.SafeZoneInfo {
+	for _, s := range m.SafeZoneInfos {
+		if InRangeXY(loc, s.LocationX, s.LocationY, s.Size) {
+			return s
+		}
+	}
+	return nil
+}
+
+func (m *Map) AddDoor(doorindex byte, loc common.Point) *Door {
+	for _, d := range m.doors {
+		if d.Index == doorindex {
+			return d
+		}
+	}
+
+	door := &Door{
+		Map:      m,
+		Index:    doorindex,
+		Location: loc,
+	}
+
+	m.doors[doorindex] = door
+	m.doorsMap.Set(loc, door)
+
+	return door
+}
+
+func (m *Map) OpenDoor(doorindex byte) bool {
+
+	door, has := m.doors[doorindex]
+	if !has {
+		log.Errorln("no door", doorindex)
+		return false
+	}
+
+	door.SetOpen(true)
+
+	return true
+}
+
+func (m *Map) CheckDoorOpen(loc common.Point) bool {
+
+	door := m.doorsMap.Get(loc)
+	if door == nil {
+		return true
+	}
+
+	return door.IsOpen()
 }
 
 // GetValidPoint ...
@@ -261,8 +322,8 @@ func (m *Map) GetValidPoint(x int, y int, spread int) (common.Point, error) {
 
 	for i := 0; i < 500; i++ {
 		p := common.Point{
-			X: uint32(AbsInt(x + RandomInt(-spread, spread))),
-			Y: uint32(AbsInt(y + RandomInt(-spread, spread))),
+			X: uint32(ut.AbsInt(x + ut.RandomInt(-spread, spread))),
+			Y: uint32(ut.AbsInt(y + ut.RandomInt(-spread, spread))),
 		}
 		c := m.GetCell(p)
 		if c == nil || !c.CanWalk() {
@@ -330,11 +391,13 @@ func (m *Map) RangeCell(p common.Point, depth int, fun func(c *Cell, x, y int) b
 func (m *Map) RangeObject(p common.Point, depth int, fun func(IMapObject) bool) {
 	var ret = true
 	m.RangeCell(p, depth, func(c *Cell, _, _ int) bool {
-		if c != nil && c.Objects != nil {
-			c.Objects.Range(func(k, v interface{}) bool {
-				ret = fun(v.(IMapObject))
-				return ret
-			})
+		if c != nil && c.objects != nil {
+			for _, o := range c.objects {
+				ret = fun(o)
+				if ret == false {
+					return false
+				}
+			}
 		}
 
 		return ret
@@ -404,72 +467,4 @@ func (m *Map) CalcDiff(from, to common.Point, datarange int) *CellSet {
 	}
 
 	return set
-}
-
-// CompleteMagic ...
-func (m *Map) CompleteMagic(args ...interface{}) {
-	magic := args[0].(*common.UserMagic)
-	switch magic.Spell {
-	case common.SpellSummonSkeleton, common.SpellSummonShinsu, common.SpellSummonHolyDeva, common.SpellSummonVampire, common.SpellSummonToad, common.SpellSummonSnakes:
-		player := args[1].(*Player)
-		monster := args[2].(*Monster)
-		front := args[3].(common.Point)
-		if monster.Master.IsDead() {
-			return
-		}
-		cell := m.GetCell(front)
-		if cell.IsValid() {
-			monster.Spawn(m, front)
-		} else {
-			monster.Spawn(m, player.GetPoint())
-		}
-		pets := monster.Master.Pets
-		pets = append(pets, monster)
-	case common.SpellMassHealing:
-		value := args[1].(int)
-		location := args[2].(common.Point)
-		player := args[3].(*Player)
-		m.RangeObject(location, 1, func(o IMapObject) bool {
-			if o.GetRace() == common.ObjectTypePlayer && o.IsFriendlyTarget(player) {
-				target := o.(*Player)
-				for i := range target.Buffs {
-					if target.Buffs[i].BuffType == common.BuffTypeHiding {
-						return true
-					}
-				}
-				target.AddBuff(NewBuff(player.NewObjectID(), common.BuffTypeHiding, 0, time.Now().Add(time.Duration(value*1000)*time.Millisecond)))
-			}
-			return true
-		})
-	case common.SpellSoulShield, common.SpellBlessedArmour:
-		value := args[1].(int)
-		location := args[2].(common.Point)
-		player := args[3].(*Player)
-		buffType := common.BuffTypeSoulShield
-		if magic.Spell == common.SpellBlessedArmour {
-			buffType = common.BuffTypeBlessedArmour
-		}
-		m.RangeObject(location, 1, func(o IMapObject) bool {
-			if o.GetRace() == common.ObjectTypePlayer {
-				target := o.(*Player)
-				target.AddBuff(NewBuff(player.NewObjectID(), buffType, int(target.Level)/7+4, time.Now().Add(time.Duration(value*1000)*time.Millisecond)))
-			}
-			return true
-		})
-	case common.SpellFireWall:
-		// player := args[1].(*Player)
-		// value := args[2].(int)
-		// location := args[3].(common.Point)
-		// player.LevelMagic(magic)
-		// TODO SpellObject
-	case common.SpellLightning:
-		// player := args[1].(*Player)
-		// value := args[2].(int)
-		// location := args[3].(common.Point)
-		// direction := args[4].(common.MirDirection)
-	case common.SpellThunderStorm, common.SpellFlameField, common.SpellNapalmShot, common.SpellStormEscape:
-		// player := args[1].(*Player)
-		// value := args[2].(int)
-		// location := args[3].(common.Point)
-	}
 }

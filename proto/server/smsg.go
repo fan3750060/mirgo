@@ -369,14 +369,14 @@ type UserInformation struct {
 	Experience                int64
 	MaxExperience             int64
 	LevelEffect               common.LevelEffects
-	Inventory                 []common.UserItem
-	Equipment                 []common.UserItem
-	QuestInventory            []common.UserItem
+	Inventory                 []*common.UserItem
+	Equipment                 []*common.UserItem
+	QuestInventory            []*common.UserItem
 	Gold                      uint32
 	Credit                    uint32
 	HasExpandedStorage        bool
 	ExpandedStorageExpiryTime int64
-	ClientMagics              []common.ClientMagic
+	ClientMagics              []*common.ClientMagic
 }
 
 func (msg *UserInformation) String() string {
@@ -459,7 +459,7 @@ type ObjectChat struct {
 }
 
 type NewItemInfo struct {
-	Info common.ItemInfo
+	Info *common.ItemInfo
 }
 
 type MoveItem struct {
@@ -512,7 +512,7 @@ type StoreItem struct {
 }
 
 type SplitItem struct {
-	Item common.UserItem
+	Item *common.UserItem
 	Grid common.MirGridType
 }
 
@@ -579,7 +579,7 @@ type PlayerInspect struct {
 	Name      string
 	GuildName string
 	GuildRank string
-	Equipment []common.UserItem
+	Equipment []*common.UserItem
 	Class     common.MirClass
 	Gender    common.MirGender
 	Hair      uint8
@@ -625,7 +625,7 @@ type ObjectGold struct {
 }
 
 type GainedItem struct {
-	Item common.UserItem
+	Item *common.UserItem
 }
 
 type GainedGold struct {
@@ -712,7 +712,8 @@ type DeleteItem struct {
 }
 
 type Death struct {
-	Location  common.Point
+	LocationX int32
+	LocationY int32
 	Direction common.MirDirection
 }
 
@@ -806,11 +807,11 @@ type MapChanged struct {
 	Title        string
 	MiniMap      uint16
 	BigMap       uint16
-	Music        uint16
 	Lights       common.LightSetting
 	Location     common.Point
 	Direction    common.MirDirection
 	MapDarkLight uint8
+	Music        uint16
 }
 
 type ObjectTeleportOut struct {
@@ -826,7 +827,7 @@ type ObjectTeleportIn struct {
 type TeleportIn struct{}
 
 type NPCGoods struct {
-	Goods []common.UserItem
+	Goods []*common.UserItem
 	Rate  float32
 	Type  common.PanelType
 }
@@ -883,7 +884,7 @@ type ItemRepaired struct {
 }
 
 type NewMagic struct {
-	Magic common.ClientMagic
+	Magic *common.ClientMagic
 }
 
 type RemoveMagic struct {
@@ -959,7 +960,7 @@ type ObjectName struct {
 }
 
 type UserStorage struct {
-	Storage []common.UserItem
+	Storage []*common.UserItem `codec:"emptyflag"`
 }
 
 type SwitchGroup struct {
@@ -1115,7 +1116,9 @@ type GuildRequestWar struct{}
 
 type DefaultNPC struct{}
 
-type NPCUpdate struct{}
+type NPCUpdate struct {
+	NPCID uint32
+}
 
 type NPCImageUpdate struct{}
 
@@ -1222,7 +1225,10 @@ type NPCRequestInput struct{}
 type GameShopInfo struct{}
 type GameShopStock struct{}
 type Rankings struct{}
-type Opendoor struct{}
+type Opendoor struct {
+	DoorIndex byte
+	Close     bool
+}
 type GetRentedItems struct{}
 type ItemRentalRequest struct{}
 type ItemRentalFee struct{}

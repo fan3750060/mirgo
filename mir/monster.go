@@ -1,16 +1,17 @@
 package mir
 
 import (
+	"container/list"
 	"fmt"
-	"sync"
 	"time"
 
 	"github.com/yenkeia/mirgo/common"
 	"github.com/yenkeia/mirgo/proto/server"
+	"github.com/yenkeia/mirgo/ut"
 )
 
 type IBehavior interface {
-	Process()
+	Process(dt time.Duration)
 }
 
 type BehaviroFactory func(id int, mon *Monster) IBehavior
@@ -24,52 +25,55 @@ func SetMonsterBehaviorFactory(fac BehaviroFactory) {
 // Monster ...
 type Monster struct {
 	MapObject
-	Image       common.Monster
-	AI          int
-	Behavior    IBehavior
-	Effect      int
-	Poison      common.PoisonType
-	Light       uint8
-	Target      IMapObject
-	Level       uint16
-	PetLevel    uint16
-	Experience  uint16
-	HP          uint32
-	MaxHP       uint32
-	MinAC       uint16
-	MaxAC       uint16
-	MinMAC      uint16
-	MaxMAC      uint16
-	MinDC       uint16
-	MaxDC       uint16
-	MinMC       uint16
-	MaxMC       uint16
-	MinSC       uint16
-	MaxSC       uint16
-	Accuracy    uint8
-	Agility     uint8
-	MoveSpeed   uint16
-	AttackSpeed int32
-	ArmourRate  float32
-	DamageRate  float32
-	ViewRange   int
-	Master      *Player
-	EXPOwner    *Player
-	ActionList  *sync.Map // map[uint32]DelayedAction
-	ActionTime  time.Time
-	AttackTime  time.Time
-	DeadTime    time.Time
-	MoveTime    time.Time
+	Image         common.Monster
+	AI            int
+	Behavior      IBehavior
+	Effect        int
+	Poison        common.PoisonType
+	Light         uint8
+	Target        IMapObject
+	Level         uint16
+	PetLevel      uint16
+	Experience    uint16
+	HP            uint32
+	MaxHP         uint32
+	MinAC         uint16
+	MaxAC         uint16
+	MinMAC        uint16
+	MaxMAC        uint16
+	MinDC         uint16
+	MaxDC         uint16
+	MinMC         uint16
+	MaxMC         uint16
+	MinSC         uint16
+	MaxSC         uint16
+	Accuracy      uint8
+	Agility       uint8
+	MoveSpeed     uint16
+	AttackSpeed   int32
+	ArmourRate    float32
+	DamageRate    float32
+	ViewRange     int
+	Master        *Player
+	EXPOwner      *Player
+	EXPOwnerTime  time.Time
+	ActionList    *ActionList
+	ActionTime    time.Time
+	AttackTime    time.Time
+	DeadTime      time.Time
+	MoveTime      time.Time
+	PoisonList    *PoisonList
+	CurrentPoison common.PoisonType
 }
 
 func (m *Monster) String() string {
-	return fmt.Sprintf("Monster: %s, (%v), ID: %d, ptr: %p\n", m.Name, m.CurrentLocation, m.ID, m)
+	return fmt.Sprintf("Monster: %s, ID: %d, AI: %d, ptr: %p\n", m.Name, m.ID, m.AI, m)
 }
 
 // NewMonster ...
 func NewMonster(mp *Map, p common.Point, mi *common.MonsterInfo) (m *Monster) {
 	m = new(Monster)
-	m.ID = mp.Env.NewObjectID()
+	m.ID = env.NewObjectID()
 	m.Map = mp
 	m.Name = mi.Name
 	m.NameColor = common.Color{R: 255, G: 255, B: 255}
@@ -103,21 +107,45 @@ func NewMonster(mp *Map, p common.Point, mi *common.MonsterInfo) (m *Monster) {
 	m.AttackSpeed = int32(mi.AttackSpeed)
 	m.ArmourRate = 1.0
 	m.DamageRate = 1.0
-	m.ActionList = new(sync.Map)
+	m.ActionList = NewActionList()
 	now := time.Now()
 	m.ActionTime = now
 	m.MoveTime = now
 	m.ViewRange = mi.ViewRange
 	m.Behavior = behaviorFactory(m.AI, m)
+	m.PoisonList = NewPoisonList()
+	m.CurrentPoison = common.PoisonTypeNone
 	return m
+}
+
+func (i *Monster) GetMap() *Map {
+	return i.Map
 }
 
 func (m *Monster) GetID() uint32 {
 	return m.ID
 }
 
+func (m *Monster) AddPlayerCount(n int) {
+	m.PlayerCount += n
+	switch m.PlayerCount {
+	case 1:
+		m.Map.AddActiveObj(m)
+	case 0:
+		m.Map.DelActiveObj(m)
+	}
+}
+
+func (m *Monster) GetPlayerCount() int {
+	return m.PlayerCount
+}
+
 func (m *Monster) GetName() string {
 	return m.Name
+}
+
+func (m *Monster) GetLevel() int {
+	return int(m.Level)
 }
 
 func (m *Monster) GetRace() common.ObjectType {
@@ -136,27 +164,39 @@ func (m *Monster) GetDirection() common.MirDirection {
 	return m.CurrentDirection
 }
 
-func (m *Monster) GetInfo() interface{} {
-	res := &server.ObjectMonster{
-		ObjectID:          m.ID,
-		Name:              m.Name,
-		NameColor:         m.NameColor.ToInt32(),
-		Location:          m.GetPoint(),
-		Image:             m.Image,
-		Direction:         m.GetDirection(),
-		Effect:            uint8(m.Effect),
-		AI:                uint8(m.AI),
-		Light:             m.Light,
-		Dead:              m.IsDead(),
-		Skeleton:          m.IsSkeleton(),
-		Poison:            m.Poison,
-		Hidden:            m.IsHidden(),
-		ShockTime:         0,     // TODO
-		BindingShotCenter: false, // TODO
-		Extra:             false, // TODO
-		ExtraByte:         0,     // TODO
+func (m *Monster) GetHP() int {
+	return int(m.HP)
+}
+
+func (m *Monster) SetHP(amount uint32) {
+	if m.HP == amount {
+		return
 	}
-	return res
+	if amount <= m.MaxHP {
+		m.HP = amount
+	} else {
+		m.HP = m.MaxHP
+	}
+	if !m.Dead && m.HP == 0 {
+		m.Die()
+	}
+	m.BroadcastHealthChange()
+}
+
+func (m *Monster) GetMaxHP() int {
+	return int(m.MaxHP)
+}
+
+func (m *Monster) BroadcastHealthChange() {
+	IMapObject_BroadcastHealthChange(m)
+}
+
+func (m *Monster) BroadcastInfo() {
+	m.Broadcast(ServerMessage{}.ObjectMonster(m))
+}
+
+func (m *Monster) Spawned() {
+	IMapObject_Spawned(m)
 }
 
 func (m *Monster) GetBaseStats() BaseStats {
@@ -178,17 +218,73 @@ func (m *Monster) GetBaseStats() BaseStats {
 
 func (m *Monster) AddBuff(buff *Buff) {}
 
-func (m *Monster) ApplyPoison(poison *Poison, caster IMapObject) {}
+func (m *Monster) ApplyPoison(p *Poison, caster IMapObject) {
+
+	ignoreDefence := false
+
+	if p.Owner != nil && p.Owner.IsAttackTarget(m) {
+		m.Target = p.Owner
+	}
+	// TODO
+	/*
+	  if (Master != null && p.Owner != null && p.Owner.Race == ObjectType.Player && p.Owner != Master)
+	  {
+	      if (Envir.Time > Master.BrownTime && Master.PKPoints < 200)
+	          p.Owner.BrownTime = Envir.Time + Settings.Minute;
+	  }
+
+	*/
+
+	if !ignoreDefence && (p.PType == common.PoisonTypeGreen) {
+		armour := m.GetDefencePower(int(m.MinMAC), int(m.MaxMAC))
+
+		if p.Value < armour {
+
+			p.PType = common.PoisonTypeNone
+		} else {
+			p.Value -= armour
+		}
+	}
+
+	if p.PType == common.PoisonTypeNone {
+		return
+	}
+	// TODO
+	/*
+	  for (int i = 0; i < PoisonList.Count; i++)
+	  {
+	      if (PoisonList[i].PType != p.PType) continue;
+	      if ((PoisonList[i].PType == PoisonType.Green) && (PoisonList[i].Value > p.Value)) return;//cant cast weak poison to cancel out strong poison
+	      if ((PoisonList[i].PType != PoisonType.Green) && ((PoisonList[i].Duration - PoisonList[i].Time) > p.Duration)) return;//cant cast 1 second poison to make a 1minute poison go away!
+	      if (p.PType == PoisonType.DelayedExplosion) return;
+	      if ((PoisonList[i].PType == PoisonType.Frozen) || (PoisonList[i].PType == PoisonType.Slow) || (PoisonList[i].PType == PoisonType.Paralysis) || (PoisonList[i].PType == PoisonType.LRParalysis)) return;//prevents mobs from being perma frozen/slowed
+	      PoisonList[i] = p;
+	      return;
+	  }
+
+	  if (p.PType == PoisonType.DelayedExplosion)
+	  {
+	      ExplosionInflictedTime = Envir.Time + 4000;
+	      Broadcast(new S.ObjectEffect { ObjectID = ObjectID, Effect = SpellEffect.DelayedExplosion });
+	  }
+	*/
+	m.PoisonList.List.PushBack(p)
+}
 
 func (m *Monster) Broadcast(msg interface{}) {
 	m.Map.BroadcastP(m.CurrentLocation, msg, nil)
 }
 
 // Spawn 怪物生成
-func (m *Monster) Spawn(mp *Map, p common.Point) {
-	m.Map = mp
-	m.CurrentLocation = p
-	mp.AddObject(m)
+func (m *Monster) Spawn() {
+	msg, ok := m.Map.AddObject(m)
+	if !ok {
+		log.Warnln(msg)
+		return
+	}
+	// RefreshAll();
+	// SetHP(MaxHP);
+	m.Broadcast(ServerMessage{}.Object(m))
 }
 
 func (m *Monster) BroadcastDamageIndicator(typ common.DamageType, dmg int) {
@@ -236,12 +332,54 @@ func (m *Monster) IsAttackTargetMonster(attacker *Monster) bool {
 	return false
 }
 
+func (m *Monster) IsAttackTargetPlayer(attacker *Player) bool {
+	if m.IsDead() {
+		return false
+	}
+	if m.Master == nil {
+		return true
+	}
+	if attacker.AMode == common.AttackModePeace {
+		return false
+	}
+	if m.Master == attacker {
+		return attacker.AMode == common.AttackModeAll
+	}
+	if m.Master.GetRace() == common.ObjectTypePlayer { // TODO && (attacker.InSafeZone || InSafeZone) {
+		return false
+	}
+	/*
+		switch attacker.AMode {
+			case common.AttackModeGroup:
+				return Master.GroupMembers == null || !Master.GroupMembers.Contains(attacker);
+			case common.AttackModeGuild:
+				{
+					if (!(Master is PlayerObject)) return false;
+					PlayerObject master = (PlayerObject)Master;
+					return master.MyGuild == null || master.MyGuild != attacker.MyGuild;
+				}
+			case common.AttackModeEnemyGuild:
+				{
+					if (!(Master is PlayerObject)) return false;
+					PlayerObject master = (PlayerObject)Master;
+					return (master.MyGuild != null && attacker.MyGuild != null) && master.MyGuild.IsEnemy(attacker.MyGuild);
+				}
+			case common.AttackModeRedBrown:
+				return Master.PKPoints >= 200 || Envir.Time < Master.BrownTime;
+			default:
+				return true;
+		}
+	*/
+	return true
+}
+
 func (m *Monster) IsAttackTarget(attacker IMapObject) bool {
 
 	switch attacker.(type) {
 	case *Monster:
 		return m.IsAttackTargetMonster(attacker.(*Monster))
 	case *Player:
+		return m.IsAttackTargetPlayer(attacker.(*Player))
 	}
 	return true
 }
@@ -268,15 +406,16 @@ func (m *Monster) CanAttack() bool {
 
 // InAttackRange 是否在怪物攻击范围内
 func (m *Monster) InAttackRange() bool {
-	// if (Target.CurrentMap != CurrentMap) return false;
+	if m.Target.GetMap() != m.GetMap() {
+		return false
+	}
 	return !m.Target.GetPoint().Equal(m.CurrentLocation) && InRange(m.CurrentLocation, m.Target.GetPoint(), 1)
 }
 
 // Process 怪物定时轮询
-func (m *Monster) Process() {
+func (m *Monster) Process(dt time.Duration) {
 	if m.Target != nil &&
-		//m.Target.GetMap() != m.Map ||
-		(!m.Target.IsAttackTarget(m) || !InRange(m.CurrentLocation, m.Target.GetPoint(), DataRange)) {
+		(m.Target.GetMap() != m.GetMap() || !m.Target.IsAttackTarget(m) || !InRange(m.CurrentLocation, m.Target.GetPoint(), DataRange)) {
 		m.Target = nil
 	}
 
@@ -288,28 +427,17 @@ func (m *Monster) Process() {
 		return
 	}
 
-	m.Behavior.Process()
+	if m.EXPOwner != nil && now.After(m.EXPOwnerTime) {
+		m.EXPOwner = nil
+	}
+
+	m.Behavior.Process(dt)
 
 	m.ProcessBuffs()
 	m.ProcessRegan()
 	m.ProcessPoison()
 
-	finishID := make([]uint32, 0)
-	m.ActionList.Range(func(k, v interface{}) bool {
-		action := v.(*DelayedAction)
-		if action.Finish || now.Before(action.ActionTime) {
-			return true
-		}
-		action.Task.Execute()
-		action.Finish = true
-		if action.Finish {
-			finishID = append(finishID, action.ID)
-		}
-		return true
-	})
-	for i := range finishID {
-		m.ActionList.Delete(finishID[i])
-	}
+	m.ActionList.Execute()
 }
 
 // ProcessBuffs 处理怪物增益效果
@@ -324,7 +452,73 @@ func (m *Monster) ProcessRegan() {
 
 // ProcessPoison 处理怪物中毒效果
 func (m *Monster) ProcessPoison() {
+	if m.IsDead() {
+		return
+	}
+	ptype := common.PoisonTypeNone
+	l := m.PoisonList.List
+	var next *list.Element
+	for e := l.Front(); e != nil; e = next {
+		next = e.Next()
+		poison := e.Value.(*Poison)
+		if poison.Owner == nil || poison.TickCnt > poison.TickNum {
+			l.Remove(e)
+			continue
+		}
+		// log.Debugln("----")
+		// log.Debugln(time.Now())
+		// log.Debugln(poison.TickTime)
+		// log.Debugln("----")
+		if time.Now().After(poison.TickTime) {
+			poison.TickTime = poison.TickTime.Add(poison.TickSpeed)
+			poison.TickCnt++
 
+			if poison.PType == common.PoisonTypeGreen || poison.PType == common.PoisonTypeBleeding {
+
+				// TODO
+				// if (m.EXPOwner == nil || m.EXPOwner.Dead) {
+				// 	EXPOwner = poison.Owner;
+				// 	EXPOwnerTime = Envir.Time + EXPOwnerDelay;
+				// } else if (m.EXPOwner == poison.Owner) {
+				// 	EXPOwnerTime = Envir.Time + EXPOwnerDelay;
+				// }
+
+				if poison.PType == common.PoisonTypeBleeding {
+					m.Broadcast(&server.ObjectEffect{ObjectID: m.GetID(), Effect: common.SpellEffectBleeding, EffectType: 0})
+				}
+
+				m.ChangeHP(-poison.Value)
+				// if (PoisonStopRegen) {	// 停止回血
+				// 	RegenTime = Envir.Time + RegenDelay;
+				// }
+			}
+
+			// TODO
+			// if (poison.PType == PoisonType.DelayedExplosion)
+		}
+
+		switch poison.PType {
+		case common.PoisonTypeRed:
+			m.ArmourRate -= 0.5
+		case common.PoisonTypeStun:
+			m.DamageRate += 0.5
+		case common.PoisonTypeSlow:
+			m.MoveSpeed += 100
+			m.AttackSpeed += 100
+			/*
+				if poison.Time >= poison.Duration {
+					m.MoveSpeed = Info.MoveSpeed
+					m.AttackSpeed = Info.AttackSpeed
+				}
+			*/
+		}
+		ptype |= poison.PType
+	}
+	if ptype == m.CurrentPoison {
+		return
+	}
+	m.CurrentPoison = ptype
+	m.Broadcast(&server.ObjectPoisoned{ObjectID: m.GetID(), Poison: ptype})
 }
 
 // GetDefencePower 获取防御值
@@ -335,7 +529,7 @@ func (m *Monster) GetDefencePower(min, max int) int {
 	if min > max {
 		max = min
 	}
-	return RandomInt(min, max)
+	return ut.RandomInt(min, max)
 }
 
 // GetAttackPower 获取攻击值
@@ -347,7 +541,7 @@ func (m *Monster) GetAttackPower(min, max int) int {
 		max = min
 	}
 	// TODO luck
-	return RandomInt(min, max+1)
+	return ut.RandomInt(min, max+1)
 }
 
 // Die ...
@@ -394,85 +588,99 @@ func (m *Monster) ChangeHP(amount int) {
 }
 
 // Attacked 被攻击
-func (m *Monster) Attacked(attacker IMapObject, damage int, defenceType common.DefenceType, damageWeapon bool) {
+func (m *Monster) Attacked(attacker IMapObject, damage int, defenceType common.DefenceType, damageWeapon bool) int {
 	if m.Target == nil && attacker.IsAttackTarget(m) {
 		m.Target = attacker
 	}
-	armor := 0
+	armour := 0
 	switch defenceType {
 	case common.DefenceTypeACAgility:
-		if RandomInt(0, int(m.Agility)) > int(attacker.GetBaseStats().Accuracy) {
+		if ut.RandomInt(0, int(m.Agility)) > int(attacker.GetBaseStats().Accuracy) {
 			m.BroadcastDamageIndicator(common.DamageTypeMiss, 0)
-			return
+			return 0
 		}
-		armor = m.GetDefencePower(int(m.MinAC), int(m.MaxAC))
+		armour = m.GetDefencePower(int(m.MinAC), int(m.MaxAC))
 	case common.DefenceTypeAC:
-		armor = m.GetDefencePower(int(m.MinAC), int(m.MaxAC))
+		armour = m.GetDefencePower(int(m.MinAC), int(m.MaxAC))
 	case common.DefenceTypeMACAgility:
-		if RandomInt(0, int(m.Agility)) > int(attacker.GetBaseStats().Accuracy) {
+		if ut.RandomInt(0, int(m.Agility)) > int(attacker.GetBaseStats().Accuracy) {
 			m.BroadcastDamageIndicator(common.DamageTypeMiss, 0)
-			return
+			return 0
 		}
-		armor = m.GetDefencePower(int(m.MinMAC), int(m.MaxMAC))
+		armour = m.GetDefencePower(int(m.MinMAC), int(m.MaxMAC))
 	case common.DefenceTypeMAC:
-		armor = m.GetDefencePower(int(m.MinMAC), int(m.MaxMAC))
+		armour = m.GetDefencePower(int(m.MinMAC), int(m.MaxMAC))
 	case common.DefenceTypeAgility:
-		if RandomInt(0, int(m.Agility)) > int(attacker.GetBaseStats().Accuracy) {
+		if ut.RandomInt(0, int(m.Agility)) > int(attacker.GetBaseStats().Accuracy) {
 			m.BroadcastDamageIndicator(common.DamageTypeMiss, 0)
-			return
+			return 0
 		}
 	}
-	armor = int(float32(armor) * m.ArmourRate)
+	armour = int(float32(armour) * m.ArmourRate)
 	damage = int(float32(damage) * m.DamageRate)
-	value := damage - armor
-	log.Debugf("attacker damage: %d, monster armor: %d\n", damage, armor)
+	value := damage - armour
+	log.Debugf("attacker damage: %d, monster armour: %d\n", damage, armour)
 	if value <= 0 {
 		m.BroadcastDamageIndicator(common.DamageTypeMiss, 0)
-		return
+		return 0
 	}
+
+	switch attacker := attacker.(type) {
+	case *Monster:
+		if attacker.AI == 6 || attacker.AI == 58 {
+			m.EXPOwner = nil
+		} else if attacker.Master != nil {
+			if attacker.GetMap() != attacker.Master.GetMap() || !InRange(attacker.CurrentLocation, attacker.Master.CurrentLocation, DataRange) {
+				m.EXPOwner = nil
+			} else {
+				if m.EXPOwner == nil || m.EXPOwner.Dead {
+					m.EXPOwner = attacker.Master
+				}
+				if m.EXPOwner == attacker.Master {
+					m.EXPOwnerTime = time.Now().Add(5 * time.Second)
+				}
+			}
+		}
+	case *Player:
+		if m.EXPOwner == nil || m.EXPOwner.Dead {
+			m.EXPOwner = attacker
+		}
+		if m.EXPOwner == attacker {
+			m.EXPOwnerTime = time.Now().Add(5 * time.Second)
+		}
+	}
+
 	// TODO 还有很多没做
 	m.Broadcast(ServerMessage{}.ObjectStruck(m, attacker.GetID()))
 	m.BroadcastDamageIndicator(common.DamageTypeHit, value)
 	m.ChangeHP(-value)
-	log.Debugf("!!!attacker damage: %d, monster armor: %d\n", damage, armor)
+	// log.Debugln("monster->", m)
+	// log.Debugln("attacker->", attacker.(*Monster))
+
+	return 0
 }
 
 // Drop 怪物掉落物品
 func (m *Monster) Drop() {
-	value, ok := m.Map.Env.GameDB.DropInfoMap.Load(m.Name)
+	dropInfos, ok := data.DropInfoMap[m.Name]
 	if !ok {
 		return
 	}
-	dropInfos := value.([]common.DropInfo)
-	mapItems := make([]Item, 0)
-	for i := range dropInfos {
-		drop := dropInfos[i]
-		if RandomInt(1, drop.Chance) != 1 {
+	mapItems := make([]*Item, 0)
+	for _, drop := range dropInfos {
+		if ut.RandomNext(drop.High) > drop.Low {
 			continue
 		}
-		if drop.Gold > 0 {
-			mapItems = append(mapItems, Item{
-				MapObject: MapObject{
-					ID:  m.Map.Env.NewObjectID(),
-					Map: m.Map,
-				},
-				Gold:     uint64(drop.Gold),
-				UserItem: nil,
-			})
+		if drop.ItemName == "Gold" {
+			mapItems = append(mapItems, NewGold(m, uint64(drop.Count)))
 			continue
 		}
-		info := m.Map.Env.GameDB.GetItemInfoByName(drop.ItemName)
+		info := data.GetItemInfoByName(drop.ItemName)
 		if info == nil {
 			continue
 		}
-		mapItems = append(mapItems, Item{
-			MapObject: MapObject{
-				ID:  m.Map.Env.NewObjectID(),
-				Map: m.Map,
-			},
-			Gold:     0,
-			UserItem: m.Map.Env.NewUserItem(info),
-		})
+
+		mapItems = append(mapItems, NewItem(m, env.NewUserItem(info)))
 	}
 	for i := range mapItems {
 		if msg, ok := mapItems[i].Drop(m.GetPoint(), 3); !ok {
@@ -490,18 +698,11 @@ func (m *Monster) Walk(dir common.MirDirection) bool {
 	dest := m.CurrentLocation.NextPoint(dir, 1)
 	destcell := m.Map.GetCell(dest)
 
-	if destcell != nil && destcell.Objects != nil {
-		blocking := false
-		destcell.Objects.Range(func(_, v interface{}) bool {
-			o := v.(IMapObject)
+	if destcell != nil && destcell.objects != nil {
+		for _, o := range destcell.objects {
 			if o.IsBlocking() || m.GetRace() == common.ObjectTypeCreature {
-				blocking = true
 				return false
 			}
-			return true
-		})
-		if blocking {
-			return false
 		}
 	} else {
 		return false
@@ -514,6 +715,7 @@ func (m *Monster) Walk(dir common.MirDirection) bool {
 
 	m.CurrentDirection = dir
 	m.CurrentLocation = dest
+	m.UpdateInSafeZone()
 
 	m.WalkNotify(oldpos, destcell.Point)
 
@@ -532,22 +734,21 @@ func (m *Monster) WalkNotify(from, to common.Point) {
 	cells := m.Map.CalcDiff(from, to, DataRange)
 	for c, isadd := range cells.M {
 		if isadd {
-			c.Objects.Range(func(k, v interface{}) bool {
-				switch v.(type) {
+			for _, o := range c.objects {
+				switch o.(type) {
 				case *Player:
-					v.(*Player).Enqueue(ServerMessage{}.Object(m))
+					m.AddPlayerCount(1)
+					o.(*Player).Enqueue(ServerMessage{}.Object(m))
 				}
-
-				return true
-			})
+			}
 		} else {
-			c.Objects.Range(func(k, v interface{}) bool {
-				switch v.(type) {
+			for _, o := range c.objects {
+				switch o.(type) {
 				case *Player:
-					v.(*Player).Enqueue(ServerMessage{}.ObjectRemove(m))
+					m.AddPlayerCount(-1)
+					o.(*Player).Enqueue(ServerMessage{}.ObjectRemove(m))
 				}
-				return true
-			})
+			}
 		}
 
 	}
@@ -564,6 +765,8 @@ func (m *Monster) Turn(dir common.MirDirection) {
 		Direction: dir,
 		Location:  m.CurrentLocation,
 	})
+
+	m.UpdateInSafeZone()
 
 	// TODO:
 	// InSafeZone = CurrentMap.GetSafeZone(CurrentLocation) != null
@@ -584,58 +787,12 @@ func ObjectBack(m IMapObject) common.Point {
 	return m.GetPoint().NextPoint(m.GetDirection(), 1)
 }
 
-// 专用于大刀卫士攻击
-func (m *Monster) GuardAttack() {
-	if !m.Target.IsAttackTarget(m) {
-		return
-	}
-
-	target := ObjectBack(m.Target)
-
-	m.CurrentDirection = DirectionFromPoint(target, m.Target.GetPoint())
-
-	m.Broadcast(&server.ObjectAttack{
-		ObjectID:  m.GetID(),
-		LocationX: int32(target.X),
-		LocationY: int32(target.Y),
-		Direction: m.CurrentDirection,
-		Spell:     common.SpellNone,
-		Level:     uint8(0),
-		Type:      uint8(0),
-	})
-	m.Broadcast(&server.ObjectTurn{
-		ObjectID:  m.GetID(),
-		Direction: m.CurrentDirection,
-		Location:  m.CurrentLocation,
-	})
-
-	now := time.Now()
-	// ActionTime = Envir.Time + 300;
-	m.AttackTime = now.Add(time.Duration(m.AttackSpeed) * time.Millisecond)
-
-	damage := m.GetAttackPower(int(m.MinDC), int(m.MaxDC))
-
-	if m.Target.GetRace() == common.ObjectTypePlayer {
-		damage = int(^uint(0) >> 1) // INTMAX
-	}
-
-	if damage <= 0 {
-		return
-	}
-
-	switch m.Target.GetRace() {
-	case common.ObjectTypePlayer:
-		m.Target.(*Player).Attacked(m, damage, common.DefenceTypeAgility, false)
-	case common.ObjectTypeMonster:
-		m.Target.(*Monster).Attacked(m, damage, common.DefenceTypeAgility, false)
-	}
-}
-
 func (m *Monster) Attack() {
 	if !m.Target.IsAttackTarget(m) {
 		m.Target = nil
 		return
 	}
+	log.Debugf("Monster[%s]AI[%d] Attack\n", m.Name, m.AI)
 	m.CurrentDirection = DirectionFromPoint(m.CurrentLocation, m.Target.GetPoint())
 	m.Broadcast(ServerMessage{}.ObjectAttack(m, common.SpellNone, 0, 0))
 	now := time.Now()
@@ -645,12 +802,7 @@ func (m *Monster) Attack() {
 	if damage <= 0 {
 		return
 	}
-	switch m.Target.GetRace() {
-	case common.ObjectTypePlayer:
-		m.Target.(*Player).Attacked(m, damage, common.DefenceTypeAgility, false)
-	case common.ObjectTypeMonster:
-		m.Target.(*Monster).Attacked(m, damage, common.DefenceTypeAgility, false)
-	}
+	m.Target.Attacked(m, damage, common.DefenceTypeAgility, false)
 }
 
 func (m *Monster) MoveTo(location common.Point) {
@@ -663,24 +815,17 @@ func (m *Monster) MoveTo(location common.Point) {
 		if cell == nil || !cell.IsValid() {
 			return
 		}
-		ret := false
-		cell.Objects.Range(func(f, v interface{}) bool {
-			o := v.(IMapObject)
-			if !o.IsBlocking() {
-				return true
+		for _, o := range cell.objects {
+			if o.IsBlocking() {
+				return
 			}
-			ret = true
-			return false
-		})
-		if ret {
-			return
 		}
 	}
 	dir := DirectionFromPoint(m.CurrentLocation, location)
 	if m.Walk(dir) {
 		return
 	}
-	switch RandomNext(2) { //No favour
+	switch ut.RandomNext(2) { //No favour
 	case 0:
 		for i := 0; i < 7; i++ {
 			dir = NextDirection(dir)
@@ -734,21 +879,27 @@ func (m *Monster) FindTarget() {
 
 func (m *Monster) CheckStacked() bool {
 	cell := m.Map.GetCell(m.CurrentLocation)
-	if cell != nil && cell.Objects != nil {
-		ret := false
-		cell.Objects.Range(func(k, v interface{}) bool {
-			ob := v.(IMapObject)
-			if ob == m || ob.IsBlocking() {
-				ret = true
+	if cell != nil && cell.objects != nil {
+		for _, o := range cell.objects {
+			if o == m || o.IsBlocking() {
+				continue
 			}
-			return ret
-		})
+			break
+		}
 	}
 
 	return false
 }
 
 // PetRecall 宠物传送回玩家身边
-func (m *Monster) PetRecall(...interface{}) {
+func (m *Monster) PetRecall() {
 	log.Debugln("PetRecall", m.GetID())
+}
+
+func (m *Monster) CompleteAttack(target IMapObject, damage int, def common.DefenceType) {
+	if target == nil || !target.IsAttackTarget(m) || target.GetMap() != m.GetMap() {
+		return
+	}
+
+	target.Attacked(m, damage, def, false)
 }

@@ -4,52 +4,8 @@ import (
 	"time"
 
 	"github.com/yenkeia/mirgo/common"
+	"github.com/yenkeia/mirgo/proto/server"
 )
-
-type Poison struct {
-	ObjectID   uint32
-	Owner      IMapObject
-	PoisonType common.PoisonType
-	Value      int           // 效果总数
-	NextTime   time.Time     // 下次生效时间
-	Duration   time.Duration // 两次生效时间间隔
-	TickNum    int           // 总共跳几次
-	TickTime   int           // 当前第几跳
-}
-
-// NewPoison caster 释放者, value 总伤害, typ 毒类型, duration 两次间隔, tickNum 总共跳几次
-func NewPoison(id uint32, caster IMapObject, value int, typ common.PoisonType, duration time.Duration, tickNum int) *Poison {
-	return &Poison{
-		ObjectID:   id,
-		Owner:      caster,
-		PoisonType: typ,
-		Value:      value,
-		NextTime:   time.Now().Add(duration),
-		Duration:   duration,
-		TickNum:    tickNum,
-		TickTime:   0,
-	}
-}
-
-type Buff struct {
-	ObjectID   uint32
-	BuffType   common.BuffType
-	Visible    bool      // 是否可见
-	Infinite   bool      // 是否永久
-	Values     int       // public int[] Values
-	ExpireTime time.Time // 过期时间️
-}
-
-func NewBuff(id uint32, typ common.BuffType, value int, expire time.Time) *Buff {
-	return &Buff{
-		ObjectID:   id,
-		BuffType:   typ,
-		Visible:    false,
-		Infinite:   false,
-		Values:     value,
-		ExpireTime: expire,
-	}
-}
 
 type BaseStats struct {
 	MinAC    uint16
@@ -66,15 +22,32 @@ type BaseStats struct {
 	Agility  uint8
 }
 
-type IMapObject interface {
+type IDObject interface {
 	GetID() uint32
-	GetName() string
+}
+
+type ISimpleMapObject interface {
+	IDObject
+	GetMap() *Map
 	GetRace() common.ObjectType
+	Broadcast(interface{})
+}
+
+type IProcessObject interface {
+	IDObject
+	Process(dt time.Duration)
+}
+
+type IMapObject interface {
+	ISimpleMapObject
+	GetName() string
+	GetLevel() int
 	GetPoint() common.Point
 	GetCell() *Cell
-	Broadcast(interface{})
+	BroadcastHealthChange()
+	BroadcastInfo()
+	Spawned()
 	GetDirection() common.MirDirection
-	GetInfo() interface{}
 	GetBaseStats() BaseStats
 	IsAttackTarget(IMapObject) bool
 	IsFriendlyTarget(IMapObject) bool
@@ -84,6 +57,18 @@ type IMapObject interface {
 	AttackMode() common.AttackMode
 	AddBuff(*Buff)
 	ApplyPoison(*Poison, IMapObject)
+	AddPlayerCount(n int)
+	GetPlayerCount() int
+	Attacked(attacker IMapObject, damage int, dtype common.DefenceType, damageWeapon bool) int
+	GetMapObject() *MapObject
+}
+
+type ILifeObject interface {
+	ISimpleMapObject
+	GetHP() int
+	GetMaxHP() int
+	SetHP(uint32)
+	ChangeHP(int)
 }
 
 type MapObject struct {
@@ -93,7 +78,42 @@ type MapObject struct {
 	Map              *Map
 	CurrentLocation  common.Point
 	CurrentDirection common.MirDirection
-	Poisons          []*Poison
-	Buffs            []*Buff
 	Dead             bool
+	PlayerCount      int // 记录在DataRange内有多少个玩家
+	InSafeZone       bool
+}
+
+func (m *MapObject) GetMapObject() *MapObject {
+	return m
+}
+func (m *MapObject) UpdateInSafeZone() {
+	if m.Map != nil {
+		m.InSafeZone = m.Map.GetSafeZone(m.CurrentLocation) != nil
+	} else {
+		m.InSafeZone = false
+	}
+}
+
+func IMapObject_Spawned(m IMapObject) {
+	m.GetMapObject().UpdateInSafeZone()
+	m.BroadcastInfo()
+	m.BroadcastHealthChange()
+}
+
+func IMapObject_BroadcastHealthChange(m ILifeObject) {
+	if m.GetRace() != common.ObjectTypePlayer && m.GetRace() != common.ObjectTypeMonster {
+		return
+	}
+
+	// TODO RevTime
+
+	percent := byte(float32(m.GetHP()) / float32(m.GetMaxHP()) * 100)
+
+	msg := &server.ObjectHealth{
+		ObjectID: m.GetID(),
+		Percent:  percent,
+		Expire:   5,
+	}
+
+	m.Broadcast(msg)
 }

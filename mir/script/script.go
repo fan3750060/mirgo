@@ -11,12 +11,26 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/yenkeia/mirgo/ut"
 )
 
-var EnvirPath = ""
+var SearchPaths = []string{}
 
-// skip npc, player
-const argsSkip = 2
+func fullpath(file string) string {
+	file = strings.ReplaceAll(file, "\\", "/")
+
+	if filepath.IsAbs(file) {
+		return file
+	}
+	for _, v := range SearchPaths {
+		full := filepath.Join(v, file)
+		if ut.IsFile(full) {
+			return full
+		}
+	}
+	return file
+}
 
 type Script struct {
 	Types  []int
@@ -35,15 +49,15 @@ type PageScript struct {
 }
 
 func LoadFile(file string) (*Script, error) {
-	r, err := os.Open(filepath.Join(EnvirPath, file))
+	r, err := os.Open(fullpath(file))
 	if err != nil {
-		return nil, err
+		return nil, errors.New("LoadFile error " + file + ":" + err.Error())
 	}
 	return Load(r)
 }
 
 func Load(r io.Reader) (*Script, error) {
-	lines := ReadLinesByReader(r)
+	lines := ut.ReadLinesByReader(r)
 
 	sc := &Script{}
 
@@ -151,7 +165,7 @@ func (ps *PageScript) parsePage(p *PageSource) error {
 			case "ELSESAY":
 				currentSay = elseSay
 			default:
-				return errors.New("error")
+				return errors.New("error:" + p.Name + "---" + match[1])
 			}
 			continue
 		}
@@ -185,7 +199,7 @@ func (ps *PageScript) parseActions(mp map[string]*ScriptFunc, lst *list.List) ([
 	actions := []*Function{}
 
 	for it := lst.Front(); it != nil; it = it.Next() {
-		ck, err := ps.parseAction(mp, it.Value.(string))
+		ck, err := parseAction(mp, it.Value.(string))
 		if err != nil {
 			return nil, err
 		}
@@ -195,17 +209,26 @@ func (ps *PageScript) parseActions(mp map[string]*ScriptFunc, lst *list.List) ([
 	return actions, nil
 }
 
-func (ps *PageScript) parseAction(mp map[string]*ScriptFunc, s string) (*Function, error) {
-	parts := splitString(s)
+func parseAction(mp map[string]*ScriptFunc, s string) (*Function, error) {
+	parts := ut.SplitString(s)
 
 	funName := strings.ToUpper(parts[0])
 
 	method, has := mp[funName]
 	if !has {
-		return nil, errors.New("no function " + funName)
+		return nil, errors.New("no function [" + funName + "]")
 	}
 
-	expect := len(method.ArgsParser)
+	argsSkip := 0
+	for _, parser := range method.ArgsParser {
+		if parser.Fun == nil {
+			argsSkip++
+		} else {
+			break
+		}
+	}
+	expect := len(method.ArgsParser) - argsSkip
+
 	got := len(parts) - 1
 	opt := 0
 	if method.OptionArgs != nil {
@@ -220,16 +243,19 @@ func (ps *PageScript) parseAction(mp map[string]*ScriptFunc, s string) (*Functio
 	inst.Args = make([]reflect.Value, expect+argsSkip)
 	inst.Func = method.Func
 
+	if argsSkip > 0 {
+		inst.Skiped = true
+	}
+
 	for i := 0; i < expect; i++ {
 		if i >= got {
 			inst.Args[argsSkip+i] = method.OptionArgs[i-(expect-opt)]
 		} else {
-			value, err := method.ArgsParser[i](parts[i+1])
+			value, err := method.ArgsParser[argsSkip+i].Fun(parts[i+1])
 			if err != nil {
 				return nil, err
 			}
 			inst.Args[argsSkip+i] = value
-
 		}
 	}
 
@@ -237,7 +263,7 @@ func (ps *PageScript) parseAction(mp map[string]*ScriptFunc, s string) (*Functio
 }
 
 // call
-func (sc *Script) Call(npc, player interface{}, page string) ([]string, error) {
+func (sc *Script) Call(page string, args ...interface{}) ([]string, error) {
 
 	page = strings.ToUpper(page)
 	ps, has := sc.Pages[page]
@@ -248,7 +274,7 @@ func (sc *Script) Call(npc, player interface{}, page string) ([]string, error) {
 	var acts []*Function
 	var say []string
 
-	if ps.Check(npc, player) {
+	if ps.Check(args...) {
 		acts = ps.ActList
 		say = ps.Say
 	} else {
@@ -257,14 +283,14 @@ func (sc *Script) Call(npc, player interface{}, page string) ([]string, error) {
 	}
 
 	for _, act := range acts {
-		cmd := act.Exec(npc, player)
+		cmd := act.Exec(args...)
 		shouldBreak := false
 		if cmd != nil {
 			switch cmd.(type) {
 			case CMDBreak:
 				shouldBreak = true
 			case CMDGoto:
-				return sc.Call(npc, player, cmd.(CMDGoto).GOTO)
+				return sc.Call(cmd.(CMDGoto).GOTO, args...)
 			}
 		}
 		if shouldBreak {
@@ -275,14 +301,14 @@ func (sc *Script) Call(npc, player interface{}, page string) ([]string, error) {
 	return say, nil
 }
 
-func (ps *PageScript) Check(npc, player interface{}) bool {
+func (ps *PageScript) Check(args ...interface{}) bool {
 
 	if len(ps.CheckList) == 0 {
 		return true
 	}
 
 	for _, ck := range ps.CheckList {
-		if !ck.Check(npc, player) {
+		if !ck.Check(args...) {
 			return false
 		}
 	}
